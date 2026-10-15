@@ -1,3 +1,9 @@
+# Ground-map revision — 2026-10-15
+
+The current scene is a sunset valley with distant hills, continuous ground,
+code-drawn destructible buildings and masonry debris. It replaces the cloud
+banks described below. The generated bitmap remains an unused archive.
+
 # Current scenery — 2026-10-15
 
 The shipped background is now a code-drawn Canvas illustration in

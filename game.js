@@ -1,9 +1,14 @@
 'use strict';
-// Gameplay numbers: design/SCORCHED_SKY_BUILD_PLAN.md, locked Elements 1–8.
+// Gameplay numbers: design/SCORCHED_SKY_BUILD_PLAN.md, including the approved ground-map revision.
 // Unspecified values below are initial playtest tuning, not new design rules.
 const TUNING = Object.freeze({
-  width:1280, height:720, cell:4, islandLeft:100, islandRight:1180,
-  surface:342, hillAmplitude:48, hillFrequency:0.009, detailAmplitude:15,
+  width:1280, height:720, cell:4, islandLeft:0, islandRight:1280,
+  bedrock:536, driveBudget:110, driveSpeed:72, driveMaxStep:4, boundaryInset:30,
+  buildingWidth:64, buildingHeight:68, buildingRoof:15, buildingHP:60, buildingLeft:430, buildingRight:850,
+  buildingShield:0.15, buildingSupportFraction:0.5, buildingSupportDepth:12,
+  rubblePieces:24, rubbleSpread:100, debrisLife:2, debrisSpeed:160,
+  aiDriveBudget:65, aiCoverGap:6,
+  surface:370, hillAmplitude:48, hillFrequency:0.009, detailAmplitude:15,
   detailFrequency:0.023, bottom:570, taper:90, padHalfWidth:40,
   spawnLeft:285, spawnRight:995, gravity:260, tankGravity:650,
   maxSpeed:650, windMax:24, step:1/120, maxFrame:0.05,
@@ -61,12 +66,12 @@ class Terrain {
   generate(){const phase=random(0,Math.PI*2);for(let c=0;c<this.cols;c++){
     const x=c*TUNING.cell;if(x<TUNING.islandLeft||x>TUNING.islandRight)continue;
     let top=TUNING.surface+Math.sin(x*TUNING.hillFrequency+phase)*TUNING.hillAmplitude+Math.sin(x*TUNING.detailFrequency+phase)*TUNING.detailAmplitude;
-    for(const spawn of [TUNING.spawnLeft,TUNING.spawnRight]){const mix=clamp((Math.abs(x-spawn)-TUNING.padHalfWidth)/TUNING.padHalfWidth,0,1);top=TUNING.surface+(top-TUNING.surface)*mix;}
-    const edge=Math.min(x-TUNING.islandLeft,TUNING.islandRight-x),bottom=TUNING.bottom-TUNING.taper*Math.exp(-edge/TUNING.taper);
+    for(const spawn of [TUNING.spawnLeft,TUNING.spawnRight,TUNING.buildingLeft,TUNING.buildingRight]){const mix=clamp((Math.abs(x-spawn)-TUNING.padHalfWidth)/TUNING.padHalfWidth,0,1);top=TUNING.surface+(top-TUNING.surface)*mix;}
+    const bottom=TUNING.height;
     this.originalTop[c]=Math.ceil(top/TUNING.cell)*TUNING.cell;
     for(let r=Math.ceil(top/TUNING.cell);r*TUNING.cell<bottom;r++)this.data[r*this.cols+c]=1;
   }this.version++;}
-  crater(x,y,radius=TUNING.craterRadius){for(let r=Math.max(0,Math.floor((y-radius)/TUNING.cell));r<Math.min(this.rows,Math.ceil((y+radius)/TUNING.cell));r++)for(let c=Math.max(0,Math.floor((x-radius)/TUNING.cell));c<Math.min(this.cols,Math.ceil((x+radius)/TUNING.cell));c++)if(Math.hypot((c+.5)*TUNING.cell-x,(r+.5)*TUNING.cell-y)<radius)this.data[r*this.cols+c]=0;this.version++;}
+  crater(x,y,radius=TUNING.craterRadius){for(let r=Math.max(0,Math.floor((y-radius)/TUNING.cell));r<Math.min(this.rows,Math.ceil((y+radius)/TUNING.cell));r++)for(let c=Math.max(0,Math.floor((x-radius)/TUNING.cell));c<Math.min(this.cols,Math.ceil((x+radius)/TUNING.cell));c++)if(r*TUNING.cell<TUNING.bedrock&&Math.hypot((c+.5)*TUNING.cell-x,(r+.5)*TUNING.cell-y)<radius)this.data[r*this.cols+c]=0;this.version++;}
   mound(x,y){
     for(let c=Math.max(0,Math.floor((x-TUNING.dirtRadius)/TUNING.cell));c<Math.min(this.cols,Math.ceil((x+TUNING.dirtRadius)/TUNING.cell));c++){
       const dx=((c+.5)*TUNING.cell-x)/TUNING.dirtRadius;
@@ -112,6 +117,7 @@ class DuelGame {
   newRound(){
     this.terrain=new Terrain();this.tanks=[makeTank(TUNING.spawnLeft,'#45c4ef',TUNING.initialAngle),makeTank(TUNING.spawnRight,this.rival.color,TUNING.aiAngle)];
     this.tanks.forEach((t,i)=>{t.y=this.terrain.floor(t.x,0);t.ammo=this.inventory[i];});
+    this.buildings=[TUNING.buildingLeft,TUNING.buildingRight].map((x,i)=>({x,y:this.terrain.floor(x,0),width:TUNING.buildingWidth,height:TUNING.buildingHeight,hp:TUNING.buildingHP,id:i}));this.rubble=[];
     this.projectiles=[];this.ghost=[];this.actionPaths=[];this.result='';this.winner=null;this.roundLoser=null;this.stable=0;this.actionLandings=[];
     this.aiPower=clamp(TUNING.aiInitialPower*Math.sqrt(Math.abs(this.tanks[1].x-this.tanks[0].x)/(TUNING.spawnRight-TUNING.spawnLeft))+random(-this.rival.initialError,this.rival.initialError),TUNING.minPower,TUNING.maxPower);
     this.aiElevation=TUNING.initialAngle;this.aiShots=0;this.aiObservation=null;this.aiAction=null;
@@ -119,11 +125,53 @@ class DuelGame {
   }
   beginTurn(chargeBurial=true){
     this.phase='aim';this.wind=Math.round(random(-TUNING.windMax,TUNING.windMax));this.timer=TUNING.aiDelay;
-    const tank=this.tanks[this.turn];checkBurial(tank,this.terrain);
+    const tank=this.tanks[this.turn];tank.driveLeft=TUNING.driveBudget;this.driveDirection=0;this.aiDriveLeft=TUNING.aiDriveBudget;checkBurial(tank,this.terrain);
     if(chargeBurial&&tank.buried)this.damage(tank,TUNING.burialDamage,'burial');
     this.checkRoundEnd();this.emit('state');
   }
-  canFire(){return this.phase==='aim';}
+  canFire(){const t=this.tanks[this.turn];return this.phase==='aim'&&t.grounded&&Math.abs(t.vx)<TUNING.settleSpeed;}
+  buildingAt(x,y){return this.buildings.find(b=>b.hp>0&&x>=b.x-b.width/2&&x<=b.x+b.width/2&&y>=b.y-b.height-TUNING.buildingRoof*(1-Math.abs(x-b.x)/(b.width/2))&&y<=b.y);}
+  solid(x,y){return this.terrain.solid(x,y)||!!this.buildingAt(x,y);}
+  setDrive(direction){this.driveDirection=this.phase==='aim'&&this.turn===0?Math.sign(direction):0;}
+  drive(direction,dt){
+    const t=this.tanks[this.turn];checkBurial(t,this.terrain);
+    if(this.phase!=='aim'||!t.grounded||t.embedded||Math.abs(t.vx)>=TUNING.settleSpeed||t.driveLeft<=0)return 0;
+    const distance=Math.min(TUNING.driveSpeed*dt,t.driveLeft),steps=Math.max(1,Math.ceil(distance/TUNING.cell));let moved=0;
+    for(let i=0;i<steps;i++){
+      const x=clamp(t.x+Math.sign(direction)*distance/steps,TUNING.boundaryInset,TUNING.width-TUNING.boundaryInset);
+      if(x===t.x)break;
+      const floor=this.terrain.floor(x,t.y-TUNING.driveMaxStep);
+      const front=x+Math.sign(direction)*TUNING.tankHalfWidth;
+      if(!Number.isFinite(floor)||floor<t.y-TUNING.driveMaxStep||this.terrain.solid(front,t.y-TUNING.tankHalfWidth))break;
+      if(this.buildings.some(b=>b.hp>0&&x+TUNING.tankHalfWidth>b.x-b.width/2&&x-TUNING.tankHalfWidth<b.x+b.width/2&&t.y>b.y-b.height&&t.y-TUNING.tankHeight<b.y))break;
+      if(this.tanks.some(other=>other!==t&&Math.abs(other.x-x)<TUNING.tankHalfWidth*2&&Math.abs(other.y-t.y)<TUNING.tankHeight))break;
+      const step=Math.abs(x-t.x);t.x=x;moved+=step;t.driveLeft=Math.max(0,t.driveLeft-step);if(t.driveLeft<1e-6)t.driveLeft=0;
+      if(floor-t.y<=TUNING.driveMaxStep){t.y=floor;}else {t.grounded=false;t.fallStart=t.y;break;}
+    }
+    return moved;
+  }
+  shielded(x,y,t){
+    const tx=t.x,ty=t.y-TUNING.tankHeight/2,n=Math.ceil(Math.hypot(tx-x,ty-y)/TUNING.cell);
+    for(let i=1;i<n;i++)if(this.buildingAt(x+(tx-x)*i/n,y+(ty-y)*i/n))return true;
+    return false;
+  }
+  collapse(b){
+    if(b.hp<=0)return;b.hp=0;this.rubble.push({x:b.x,y:b.y,width:b.width,id:b.id});
+    this.emit('collapse',{x:b.x,y:b.y-b.height/2,width:b.width,height:b.height});
+  }
+  damageBuildings(x,y,weapon){
+    for(const b of this.buildings){if(b.hp<=0)continue;
+      const distance=Math.hypot(Math.max(0,Math.abs(x-b.x)-b.width/2),Math.max(b.y-b.height-y,0,y-b.y));
+      const damage=weapon.damage*Math.max(0,1-distance/weapon.splash);
+      if(damage>=b.hp)this.collapse(b);else {b.hp-=damage;if(damage>0)this.emit('chips',{x,y,width:b.width});}
+    }
+  }
+  checkBuildings(){
+    for(const b of this.buildings){if(b.hp<=0)continue;let support=0,total=0;
+      for(let x=b.x-b.width/2;x<b.x+b.width/2;x+=TUNING.cell){total++;if(this.terrain.floor(x,b.y)<=b.y+TUNING.buildingSupportDepth)support++;}
+      if(support/total<TUNING.buildingSupportFraction)this.collapse(b);
+    }
+  }
   selectWeapon(id){if(this.phase==='aim'&&WEAPONS[id]&&(id==='standard'||this.tanks[this.turn].ammo[id]>0))this.tanks[this.turn].weapon=id;}
   damage(t,amount,cause){if(t.hp<=0)return;const n=Math.min(t.hp,Math.round(amount));if(n<=0)return;t.hp-=n;t.cause=cause;this.emit('damage',{x:t.x,y:t.y-TUNING.tankHeight,amount:n,cause});}
   shoot(){
@@ -133,10 +181,10 @@ class DuelGame {
     if(id!=='standard')t.ammo[id]--;
     const r=t.angle*Math.PI/180,s=TUNING.maxSpeed*t.power/TUNING.maxPower,pivot={x:t.x,y:t.y-TUNING.tankHeight};
     let distance=TUNING.barrel;
-    for(let d=0;d<=TUNING.barrel;d+=TUNING.cell/2)if(this.terrain.solid(pivot.x+Math.cos(r)*d,pivot.y-Math.sin(r)*d)){distance=d;break;}
+    for(let d=0;d<=TUNING.barrel;d+=TUNING.cell/2)if(this.solid(pivot.x+Math.cos(r)*d,pivot.y-Math.sin(r)*d)){distance=d;break;}
     const p={x:pivot.x+Math.cos(r)*distance,y:pivot.y-Math.sin(r)*distance,vx:Math.cos(r)*s,vy:-Math.sin(r)*s,age:0,path:[],owner:this.turn,weapon:id,alive:true};
     if(this.turn===1)this.aiAction={power:t.power,angle:t.angle,originX:t.x,targetX:this.aiTargetX??this.tanks[0].x,wind:this.wind};
-    this.projectiles=[p];this.actionOwner=this.turn;this.actionPaths=[];this.actionLandings=[];this.phase='flight';t.recoil=TUNING.recoilTime;this.emit('fire',{x:p.x,y:p.y});
+    this.projectiles=[p];this.actionOwner=this.turn;this.actionPaths=[];this.actionLandings=[];this.phase='flight';this.driveDirection=0;t.recoil=TUNING.recoilTime;this.emit('fire',{x:p.x,y:p.y});
     if(distance<TUNING.barrel)this.contact(p,null);
     this.emit('state');return true;
   }
@@ -144,11 +192,12 @@ class DuelGame {
     if(!p.alive)return;p.alive=false;this.actionPaths.push(p.path.slice());this.actionLandings.push(p.x);
     if(hit){const weapon=WEAPONS[p.weapon];
       if(p.weapon==='dirt'){this.terrain.mound(p.x,p.y);this.tanks.forEach(t=>checkBurial(t,this.terrain));}
-      else {this.terrain.crater(p.x,p.y,weapon.radius);this.tanks.forEach((t,i)=>{const distance=Math.hypot(p.x-t.x,p.y-(t.y-TUNING.tankHeight/2));this.damage(t,i===directTank?weapon.damage:weapon.damage*Math.max(0,1-distance/weapon.splash),'explosion');});}
+      else {const shield=this.tanks.map(t=>this.shielded(p.x,p.y,t));this.terrain.crater(p.x,p.y,weapon.radius);this.tanks.forEach((t,i)=>{const distance=Math.hypot(p.x-t.x,p.y-(t.y-TUNING.tankHeight/2));this.damage(t,i===directTank?weapon.damage:weapon.damage*Math.max(0,1-distance/weapon.splash)*(shield[i]?TUNING.buildingShield:1),'explosion');});this.damageBuildings(p.x,p.y,weapon);this.checkBuildings();}
       this.emit('impact',{x:p.x,y:p.y,radius:weapon.radius,weapon:p.weapon});
     }
   }
   contact(p,directTank){
+    if(this.buildingAt(p.x,p.y)){this.impact(p,true,directTank);return;}
     if(p.weapon==='drill'&&directTank===null){
       p.mode='drill';p.drilled=0;const speed=Math.hypot(p.vx,p.vy)||1;p.vx=p.vx/speed*TUNING.drillSpeed;p.vy=p.vy/speed*TUNING.drillSpeed;
     }else if(p.weapon==='roller'&&directTank===null){
@@ -159,11 +208,12 @@ class DuelGame {
     p.age+=dt;const distance=TUNING.drillSpeed*dt,steps=Math.max(1,Math.ceil(distance/(TUNING.cell/2)));
     for(let i=0;i<steps&&p.alive;i++){
       p.x+=p.vx*dt/steps;p.y+=p.vy*dt/steps;p.drilled+=distance/steps;p.path.push([p.x,p.y]);
+      if(this.buildingAt(p.x,p.y)){this.impact(p,true);break;}
       const solid=this.terrain.solid(p.x,p.y);
       if(!solid&&p.drilled>TUNING.drillExitDistance){this.impact(p,true);break;}
       if(p.drilled>=TUNING.drillMaxDistance){this.impact(p,false);break;}
       // Cut behind the nose so the next probe still sees untouched dirt.
-      if(solid){const behind=TUNING.drillTunnel;this.terrain.crater(p.x-p.vx/TUNING.drillSpeed*behind,p.y-p.vy/TUNING.drillSpeed*behind,TUNING.drillTunnel);}
+      if(solid){const behind=TUNING.drillTunnel;this.terrain.crater(p.x-p.vx/TUNING.drillSpeed*behind,p.y-p.vy/TUNING.drillSpeed*behind,TUNING.drillTunnel);this.checkBuildings();}
       if(p.x<0||p.x>TUNING.width||p.y>TUNING.height||p.age>TUNING.projectileLife)this.impact(p,false);
     }
   }
@@ -179,7 +229,7 @@ class DuelGame {
     }else p.vy+=TUNING.tankGravity*dt;
     p.x+=p.vx*dt;p.y+=p.vy*dt;p.path.push([p.x,p.y]);
     const direct=this.tanks.findIndex(t=>Math.hypot(p.x-t.x,p.y-(t.y-TUNING.tankHeight/2))<TUNING.directHitRadius);
-    if(direct>=0||p.rollAge>=TUNING.rollerLife)this.impact(p,true,direct>=0?direct:null);
+    if(direct>=0||this.buildingAt(p.x,p.y)||p.rollAge>=TUNING.rollerLife)this.impact(p,true,direct>=0?direct:null);
     else if(p.y>TUNING.height||p.x<0||p.x>TUNING.width)this.impact(p,false);
   }
   stepProjectile(p,dt){
@@ -194,7 +244,7 @@ class DuelGame {
     for(let i=0;i<steps&&p.alive;i++){
       p.x+=dx/steps;p.y+=dy/steps;p.path.push([p.x,p.y]);
       const direct=this.tanks.findIndex(t=>Math.hypot(p.x-t.x,p.y-(t.y-TUNING.tankHeight/2))<TUNING.directHitRadius);
-      if(this.terrain.solid(p.x,p.y)||direct>=0){this.contact(p,direct>=0?direct:null);break;}
+      if(this.solid(p.x,p.y)||direct>=0){this.contact(p,direct>=0?direct:null);break;}
       else if(p.y>TUNING.height||p.x<0||p.x>TUNING.width||p.age>TUNING.projectileLife)this.impact(p,false);
     }
   }
@@ -239,6 +289,7 @@ class DuelGame {
   }
   aiTurn(){
     const tank=this.tanks[1],target=this.tanks[0],direction=Math.sign(target.x-tank.x)||-1;tank.weapon=this.chooseAIWeapon();
+    if(this.aiObservation){const oldRange=Math.abs(this.aiObservation.targetX-this.aiObservation.originX),newRange=Math.abs(target.x-tank.x);if(oldRange>TUNING.aiMinObservedRange)this.aiPower=clamp(this.aiPower*Math.sqrt(newRange/oldRange),TUNING.minPower,TUNING.maxPower);}
     const elevation=this.aiElevation+random(-this.rival.angleError,this.rival.angleError);
     tank.angle=Math.round(clamp(direction<0?TUNING.maxAngle-elevation:elevation,TUNING.minAngle,TUNING.maxAngle));
     // Deadeye targets the downhill shoulder with heavy shots to remove support.
@@ -252,14 +303,14 @@ class DuelGame {
   }
   checkRoundEnd(){
     if(['roundOver','matchOver','draft'].includes(this.phase))return;
-    const dead=this.tanks.map(t=>t.hp<=0||t.y>TUNING.killY||t.x<-TUNING.tankHalfWidth||t.x>TUNING.width+TUNING.tankHalfWidth);
+    const dead=this.tanks.map(t=>t.hp<=0);
     if(!dead.some(Boolean))return;
     if(this.phase==='flight'&&this.actionOwner===0)this.ghost=this.actionPaths.concat(this.projectiles.filter(p=>p.alive).map(p=>p.path.slice()));
     this.projectiles=[];
     const winner=dead.every(Boolean)?null:dead[0]?1:0;this.winner=winner;this.roundLoser=winner===null?null:1-winner;
     if(winner!==null)this.scores[winner]++;
-    const loser=this.tanks[this.roundLoser];const cause=loser&&(loser.y>TUNING.killY?'ring-out':loser.cause||'ring-out');
-    this.result=winner===null?'Both tanks fell — round drawn':`${winner===0?'You win':this.rivalName+' wins'} · ${cause}`;
+    const loser=this.tanks[this.roundLoser];const cause=loser&&(loser.cause||'damage');
+    this.result=winner===null?'Both tanks destroyed — round drawn':`${winner===0?'You win':this.rivalName+' wins'} · ${cause}`;
     this.phase=this.scores.some(n=>n>=TUNING.winsToMatch)?'matchOver':'roundOver';this.emit('state');
   }
   advance(){
@@ -277,7 +328,7 @@ class DuelGame {
     else {this.draftActor=this.draftOrder[this.draftStep];this.timer=TUNING.aiDelay;this.emit('state');}return true;
   }
   update(dt){
-    this.clock+=dt;this.tanks.forEach(t=>{t.recoil=Math.max(0,t.recoil-dt);moveTank(t,this.terrain,dt,(...args)=>this.damage(...args));});
+    this.clock+=dt;if(this.phase==='aim'&&this.turn===0&&this.driveDirection)this.drive(this.driveDirection,dt);this.tanks.forEach(t=>{t.recoil=Math.max(0,t.recoil-dt);const oldX=t.x;moveTank(t,this.terrain,dt,(...args)=>this.damage(...args));t.x=clamp(t.x,TUNING.boundaryInset,TUNING.width-TUNING.boundaryInset);if(t.x===TUNING.boundaryInset||t.x===TUNING.width-TUNING.boundaryInset)t.vx=0;for(const b of this.buildings)if(b.hp>0&&t.x+TUNING.tankHalfWidth>b.x-b.width/2&&t.x-TUNING.tankHalfWidth<b.x+b.width/2&&t.y>b.y-b.height&&t.y-TUNING.tankHeight<b.y){t.x=oldX;t.vx=0;}});
     if(this.phase==='flight'){
       this.projectiles.slice().forEach(p=>{if(p.alive)this.stepProjectile(p,dt);});this.projectiles=this.projectiles.filter(p=>p.alive);
       if(!this.projectiles.length)this.finishAction();
@@ -287,7 +338,15 @@ class DuelGame {
       if(this.tanks.every(t=>t.grounded&&Math.abs(t.vx)<TUNING.settleSpeed))this.stable+=dt;else this.stable=0;
       if(this.stable>=TUNING.settleTime){this.turn=1-this.turn;this.beginTurn();}
     }
-    if(this.phase==='aim'&&this.turn===1){this.timer-=dt;if(this.timer<=0)this.aiTurn();}
+    if(this.phase==='aim'&&this.turn===1){
+      const t=this.tanks[1],target=this.tanks[0];
+      const cover=this.buildings.filter(b=>b.hp>0&&b.x>Math.min(t.x,target.x)&&b.x<Math.max(t.x,target.x)).sort((a,b)=>Math.abs(a.x-t.x)-Math.abs(b.x-t.x))[0];
+      if(cover&&this.aiDriveLeft>0){const goal=cover.x+Math.sign(t.x-cover.x)*(cover.width/2+TUNING.tankHalfWidth+TUNING.aiCoverGap),gap=goal-t.x;
+        const moved=Math.abs(gap)>TUNING.cell?this.drive(Math.sign(gap),Math.min(dt,Math.abs(gap)/TUNING.driveSpeed)):0;
+        this.aiDriveLeft=moved?Math.max(0,this.aiDriveLeft-moved):0;
+      }else this.aiDriveLeft=0;
+      if(this.aiDriveLeft<=0){this.timer-=dt;if(this.timer<=0&&this.canFire())this.aiTurn();}
+    }
     if(this.phase==='draft'&&this.draftActor===1){this.timer-=dt;if(this.timer<=0)this.draft(this.chooseAIDraft());}
   }
 }
@@ -298,7 +357,7 @@ const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d');
 const terrainCanvas=document.createElement('canvas');terrainCanvas.width=TUNING.width;terrainCanvas.height=TUNING.height;const tc=terrainCanvas.getContext('2d');
 const litTerrain=document.createElement('canvas');litTerrain.width=TUNING.width;litTerrain.height=TUNING.height;const litBrush=litTerrain.getContext('2d');
 const angle=document.querySelector('#angle'),power=document.querySelector('#power'),fire=document.querySelector('#fire'),status=document.querySelector('#status'),windLabel=document.querySelector('#wind'),weaponSelect=document.querySelector('#weapon');
-let terrain=game.terrain,tanks=game.tanks,shot=null,ghost=[],clock=0,particles=[],blast=null,blasts=[],floatTexts=[],shake=0,terrainVersion=-1,terrainRef=null,accumulator=0,last=0,uiStamp='';
+let terrain=game.terrain,tanks=game.tanks,shot=null,ghost=[],clock=0,debris=[],particles=[],blast=null,blasts=[],floatTexts=[],shake=0,terrainVersion=-1,terrainRef=null,accumulator=0,last=0,uiStamp='';
 const keys=new Map();
 // Code-drawn scenery shares the tanks' rounded shapes and warm/cool shading.
 // Cache it once; no asset downloads, gameplay RNG, or collision changes.
@@ -318,33 +377,15 @@ function bakeSky(){
   skyEllipse(x,y,125+(i%2)*45,7,'#ffe0ba35');skyEllipse(x+49,y-5,64,10,'#ffe7c32b');
  }
  skyEllipse(965,238,64,64,'#ffe7ac35');skyEllipse(965,238,53,53,'#ffeab795');skyEllipse(965,238,46,46,'#fff1c5');
- // Three banks of sculpted cloud puffs. Luminous upper rims and mauve
- // undersides use the same lighting language as the armor and dirt.
+ // Distant hills establish a grounded valley; only the foreground is solid.
  for(let layer=0;layer<3;layer++){
-  const base=550+layer*77;
-  skyBrush.fillStyle=['#c3a1b5','#aa91b0','#817eaa'][layer];skyBrush.fillRect(0,base+30,1280,720-base);
-  for(let i=-1;i<13;i++){
-   const x=i*119+(layer%2)*57,y=base+Math.sin(i*2.3+layer)*23;
-   const r=48+(Math.sin(i*3.1+layer)+1)*15;
-   skyEllipse(x,y+20,r*1.4,r*.65,['#bc98ae','#a58aaa','#807ba4'][layer]);
-   skyEllipse(x,y-3,r*1.32,r*.69,['#f2c3b1','#e3b8b3','#b7a0bf'][layer]);
-   skyEllipse(x-22,y-18,r*.69,r*.58,['#ffe0b6','#f5cdb9','#d2b3c4'][layer]);
-   skyEllipse(x+29,y-7,r*.83,r*.48,['#ffdbb0','#edc3b7','#c4a9c0'][layer]);
-   skyEllipse(x+9,y+22,r*1.14,r*.26,['#e1afaa','#c7a2b0','#9b8eaf'][layer]);
-  }
+  const base=295+layer*44;skyBrush.beginPath();skyBrush.moveTo(0,720);
+  for(let x=0;x<=1280;x+=12)skyBrush.lineTo(x,base+Math.sin(x*.007+layer*1.8)*38+Math.sin(x*.017+layer)*12);
+  skyBrush.lineTo(1280,720);skyBrush.closePath();skyBrush.fillStyle=['#b69daf','#aa939c','#9b8b86'][layer];skyBrush.fill();
  }
+
 }
 bakeSky();
-// Cached, softly feathered wisps drift below the island; all hard geometry
-// remains in the original collision cells. No new platforms or obstacles.
-const mistPlate=document.createElement('canvas');mistPlate.width=840;mistPlate.height=150;
-const mistBrush=mistPlate.getContext('2d');
-for(let i=0;i<21;i++){
- const x=30+i*39,y=77+Math.sin(i*1.9)*18,r=40+Math.sin(i*2.7)*10;
- const puff=mistBrush.createRadialGradient(x,y,0,x,y,r);
- puff.addColorStop(0,'#fff0d134');puff.addColorStop(.5,'#fce9d719');puff.addColorStop(1,'#e5daeb00');
- mistBrush.fillStyle=puff;mistBrush.fillRect(x-r,y-r,r*2,r*2);
-}
 const soilPlate=document.createElement('canvas');soilPlate.width=TUNING.width;soilPlate.height=TUNING.height;
 const soilBrush=soilPlate.getContext('2d');
 const earth=soilBrush.createLinearGradient(0,270,0,590);
@@ -375,6 +416,7 @@ function rebuildTerrain(){
  tc.fillStyle='#fff';
  for(let r=0;r<terrain.rows;r++)for(let c=0;c<terrain.cols;c++)if(terrain.data[r*terrain.cols+c])tc.fillRect(c*TUNING.cell,r*TUNING.cell,TUNING.cell,TUNING.cell);
  tc.globalCompositeOperation='source-in';tc.drawImage(soilPlate,0,0);tc.globalCompositeOperation='source-over';
+ tc.save();tc.globalCompositeOperation='source-atop';tc.fillStyle='#63596b';tc.fillRect(0,TUNING.bedrock,TUNING.width,TUNING.height-TUNING.bedrock);tc.fillStyle='#a6959c';tc.fillRect(0,TUNING.bedrock,TUNING.width,2);tc.restore();
  // Light catches the top and right of every exposed cut; the underside
  // stays shaded. This treatment also follows tunnels and through-holes.
  for(let r=0;r<terrain.rows;r++)for(let c=0;c<terrain.cols;c++)if(terrain.data[r*terrain.cols+c]){
@@ -431,16 +473,38 @@ function drawTank(t){
 }
 function drawSky(){
  ctx.drawImage(skyPlate,0,0);
- // Slow atmospheric motion entirely below the gameplay surface. These
- // wisps are translucent: a falling tank stays visible past the clouds.
- const drift=(clock*4)%1900;
- ctx.drawImage(mistPlate,drift-840,575,840,150);
- ctx.globalAlpha=.52;ctx.drawImage(mistPlate,1060-drift*.45,607,1100,150);ctx.globalAlpha=1;
+
+}
+function drawBuildings(){
+ for(const b of game.buildings){if(b.hp<=0)continue;
+  const left=b.x-b.width/2,top=b.y-b.height;
+  rounded(left-4,b.y-4,b.width+8,8,2,'#4b414b');
+  rounded(left,top,b.width,b.height,3,'#50434b');
+  const wall=ctx.createLinearGradient(left,top,left+b.width,b.y);wall.addColorStop(0,'#e1bb8b');wall.addColorStop(1,'#9d7566');
+  rounded(left+3,top+3,b.width-6,b.height-3,1,wall);
+  ctx.strokeStyle='#76595065';ctx.lineWidth=1;
+  for(let y=top+15;y<b.y;y+=13){ctx.beginPath();ctx.moveTo(left+3,y);ctx.lineTo(left+b.width-3,y);ctx.stroke();for(let x=left+8+(Math.round(y)%2)*10;x<left+b.width;x+=22){ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x,y-12);ctx.stroke();}}
+  ctx.fillStyle='#544659';ctx.beginPath();ctx.moveTo(left-7,top+3);ctx.lineTo(b.x,top-15);ctx.lineTo(left+b.width+7,top+3);ctx.closePath();ctx.fill();
+  ctx.strokeStyle='#d99776';ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(left-6,top+1);ctx.lineTo(b.x,top-13);ctx.lineTo(left+b.width+6,top+1);ctx.stroke();
+  for(const x of [left+10,left+39]){rounded(x,top+17,15,18,2,'#5e5360');rounded(x+2,top+19,11,6,1,'#eecda2');}
+  rounded(b.x-8,b.y-23,16,23,2,'#62505a');
+  if(b.hp<TUNING.buildingHP){ctx.strokeStyle='#54404c';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(b.x+8,top+3);ctx.lineTo(b.x+1,top+23);ctx.lineTo(b.x+9,top+34);ctx.lineTo(b.x-3,top+48);ctx.stroke();}
+  rounded(b.x-22,top-24,44,4,2,'#514653');rounded(b.x-22,top-24,44*b.hp/TUNING.buildingHP,4,2,'#f0c58d');
+ }
+ // Rubble is visual wreckage, not a new invisible collision wall.
+ for(const pile of game.rubble)for(let i=0;i<TUNING.rubblePieces;i++){
+  const n=sceneryHash(i,pile.id+1),x=clamp(pile.x+(n-.5)*TUNING.rubbleSpread,0,TUNING.width),y=terrain.floor(x,0);
+  ctx.save();ctx.translate(x,y-2);ctx.rotate((n-.5)*1.1);rounded(-5,-4,9+n*6,5+n*4,1,i%3?'#ab8070':'#655264');ctx.restore();
+ }
 }
 function render(){
  drawSky();ctx.save();if(shake>0)ctx.translate(Math.sin(clock*93)*TUNING.shakePixels*shake/TUNING.shakeTime,Math.cos(clock*81)*TUNING.shakePixels*shake/TUNING.shakeTime);ctx.drawImage(litTerrain,0,0);
+ drawBuildings();
  for(const path of ghost){ctx.setLineDash([4,10]);ctx.beginPath();path.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.strokeStyle='#49384b26';ctx.lineWidth=5;ctx.stroke();ctx.strokeStyle=`rgba(255,255,255,${TUNING.ghostOpacity})`;ctx.lineWidth=3;ctx.stroke();ctx.setLineDash([]);}
  tanks.forEach(drawTank);
+ for(const d of debris){ctx.save();ctx.globalAlpha=Math.min(1,(TUNING.debrisLife-d.age)*2);ctx.translate(d.x,d.y);ctx.rotate(d.age*d.spin);rounded(-4,-3,d.size,d.size*.65,1,d.color);ctx.restore();}
+ // Fence posts mark the movement limits without adding projectile walls.
+ for(const x of [TUNING.boundaryInset,TUNING.width-TUNING.boundaryInset]){const y=terrain.floor(x,0);rounded(x-2,y-22,4,22,1,'#66515a');rounded(x-7,y-21,14,8,2,'#e9c996');}
  for(const p of game.projectiles){ellipse(p.x,p.y,9,9,'#ffefbd22');ellipse(p.x,p.y,p.weapon==='heavy'?7:4,p.weapon==='heavy'?7:4,p.weapon==='dirt'?'#b4c570':p.weapon==='roller'?'#e2bb7d':p.weapon==='drill'?'#b7d4df':'#fff4c9');}
  for(const p of particles){ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.age*9);rounded(-3,-3,6,6,1,'#945537');ctx.restore();}
  for(const blast of blasts){const k=blast.age/TUNING.explosionLife;ctx.strokeStyle=`rgba(255,240,176,${1-k})`;ctx.lineWidth=6*(1-k);ctx.beginPath();ctx.arc(blast.x,blast.y,blast.radius*(.4+k*1.3),0,Math.PI*2);ctx.stroke();
@@ -453,14 +517,16 @@ function render(){
 }
 function updateUI(){
  const t=game.tanks[0],human=game.phase==='aim'&&game.turn===0;
- angle.disabled=power.disabled=fire.disabled=weaponSelect.disabled=!human;
+ angle.disabled=power.disabled=weaponSelect.disabled=!human;fire.disabled=!human||!game.canFire();
+ for(const id of ['driveLeft','driveRight'])document.querySelector('#'+id).disabled=!human||t.driveLeft<=0||t.embedded;
+ document.querySelector('#driveValue').textContent=Math.ceil(t.driveLeft||0);
  angle.value=t.angle;power.value=t.power;
  document.querySelector('#angleValue').textContent=t.angle+'°';document.querySelector('#powerValue').textContent=t.power;
  windLabel.textContent=`${game.wind<0?'←':game.wind>0?'→':'•'} ${Math.abs(game.wind)}`;
  document.querySelector('#score').textContent=`YOU ${game.scores[0]} : ${game.scores[1]} ${ (game.rivalName||'Rookie').toUpperCase()}`;
  document.querySelector('#round').textContent=`RIVAL ${game.rivalIndex+1}/${RIVALS.length} · ROUND ${game.round} · FIRST TO ${TUNING.winsToMatch}`;
- status.textContent=game.result||(game.phase==='aim'?(human?(t.buried?'Buried! Fire to dig yourself out':t.turretBlocked?'Turret blocked · blast a way out':'Your turn · make the ground move'):(game.rivalName||'Rookie')+' is aiming…'):game.phase==='flight'?WEAPONS[game.projectiles[0]?.weapon||'standard'].name+' away':'Let the dirt settle…');
- document.querySelector('#hint').textContent=WEAPONS[t.weapon].description+(t.turretBlocked?' · Your muzzle is blocked by dirt.':'');
+ status.textContent=game.result||(game.phase==='aim'?(human?(t.buried?'Buried! Fire to dig yourself out':t.turretBlocked?'Turret blocked · blast a way out':'Your turn · drive, aim, fire'):(game.rivalName||'Rookie')+' is aiming…'):game.phase==='flight'?WEAPONS[game.projectiles[0]?.weapon||'standard'].name+' away':'Let the dirt settle…');
+ document.querySelector('#hint').textContent='A / D or hold ◀ ▶ to drive · '+WEAPONS[t.weapon].description+(t.turretBlocked?' · Your muzzle is blocked by dirt.':'');
  const stamp=JSON.stringify([game.phase,game.draftActor,game.offer,t.ammo,t.weapon,game.scores,game.rivalIndex]);
  if(uiStamp===stamp)return;uiStamp=stamp;
  weaponSelect.replaceChildren(...Object.keys(WEAPONS).filter(id=>id==='standard'||t.ammo[id]>0).map(id=>{const o=document.createElement('option');o.value=id;o.textContent=`${WEAPONS[id].name} · ${id==='standard'?'∞':t.ammo[id]}`;return o;}));weaponSelect.value=t.weapon in WEAPONS&&t.ammo[t.weapon]!==0?t.weapon:'standard';
@@ -483,12 +549,16 @@ function consumeEvents(){
   if(event.type==='impact'){
    blasts.push({...event,age:0});if(event.weapon==='heavy')shake=TUNING.shakeTime;
    for(let i=0;i<TUNING.particles;i++)particles.push({x:event.x,y:event.y,vx:random(-TUNING.particleSpeed,TUNING.particleSpeed),vy:random(-TUNING.particleSpeed,0),age:0});
+  }else if(event.type==='collapse'||event.type==='chips'){
+   const count=event.type==='collapse'?TUNING.rubblePieces:TUNING.rubblePieces/3;
+   for(let i=0;i<count;i++)debris.push({x:event.x+random(-event.width/2,event.width/2),y:event.y,vx:random(-TUNING.debrisSpeed,TUNING.debrisSpeed),vy:random(-TUNING.debrisSpeed,-TUNING.debrisSpeed/3),age:0,spin:random(-6,6),size:random(6,13),color:i%3?'#c79a78':'#655264'});
   }else if(event.type==='damage')floatTexts.push({...event,age:0});
-  else if(event.type==='round'){particles=[];blasts=[];floatTexts=[];shake=0;}
+  else if(event.type==='round'){particles=[];debris=[];blasts=[];floatTexts=[];shake=0;}
  }
 }
 function tick(dt){
  game.update(dt);consumeEvents();
+ for(const d of debris){d.age+=dt;d.vy+=TUNING.tankGravity*dt;d.x+=d.vx*dt;d.y+=d.vy*dt;const floor=game.terrain.floor(d.x,d.y-TUNING.cell);if(d.y>=floor){d.y=floor;d.vy=-Math.abs(d.vy)*.25;d.vx*=.6;}}debris=debris.filter(d=>d.age<TUNING.debrisLife);
  for(const p of particles){p.age+=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=TUNING.tankGravity*dt;}particles=particles.filter(p=>p.age<TUNING.particleLife);
  for(const b of blasts)b.age+=dt;blasts=blasts.filter(b=>b.age<TUNING.explosionLife);
  for(const text of floatTexts)text.age+=dt;floatTexts=floatTexts.filter(t=>t.age<TUNING.floatTextTime);shake=Math.max(0,shake-dt);
@@ -497,7 +567,11 @@ function tick(dt){
 function adjust(key){if(game.phase!=='aim'||game.turn!==0)return;const t=game.tanks[0];if(key==='ArrowUp')t.angle=clamp(t.angle+TUNING.aimStep,TUNING.minAngle,TUNING.maxAngle);if(key==='ArrowDown')t.angle=clamp(t.angle-TUNING.aimStep,TUNING.minAngle,TUNING.maxAngle);if(key==='ArrowRight')t.power=clamp(t.power+TUNING.aimStep,TUNING.minPower,TUNING.maxPower);if(key==='ArrowLeft')t.power=clamp(t.power-TUNING.aimStep,TUNING.minPower,TUNING.maxPower);updateUI();}
 angle.oninput=()=>{if(!angle.disabled)game.tanks[0].angle=+angle.value;updateUI();};power.oninput=()=>{if(!power.disabled)game.tanks[0].power=+power.value;updateUI();};weaponSelect.onchange=()=>{if(!weaponSelect.disabled)game.selectWeapon(weaponSelect.value);updateUI();};fire.onclick=()=>{if(game.turn===0)game.shoot();consumeEvents();updateUI();};
 document.querySelector('#restart').onclick=()=>{game.restart();keys.clear();consumeEvents();updateUI();};document.querySelector('#advance').onclick=()=>{game.advance();keys.clear();consumeEvents();updateUI();};
-window.addEventListener('keydown',e=>{if(e.target instanceof HTMLSelectElement)return;if(e.code==='Space'||e.key.startsWith('Arrow')){e.preventDefault();if(e.repeat)return;if(e.code==='Space'){if(game.turn===0&&game.phase==='aim')game.shoot();}else{adjust(e.key);keys.set(e.key,{time:0,next:TUNING.keyDelay});}}});window.addEventListener('keyup',e=>keys.delete(e.key));window.addEventListener('blur',()=>keys.clear());document.addEventListener('visibilitychange',()=>{keys.clear();last=0;accumulator=0;});
+for(const [id,direction] of [['driveLeft',-1],['driveRight',1]]){
+ const button=document.querySelector('#'+id);button.onpointerdown=e=>{e.preventDefault();button.setPointerCapture(e.pointerId);game.setDrive(direction);};
+ for(const name of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(name,()=>game.setDrive(0));
+}
+window.addEventListener('keydown',e=>{if(['KeyA','KeyD'].includes(e.code)&&!(e.target instanceof HTMLSelectElement)){e.preventDefault();game.setDrive(e.code==='KeyA'?-1:1);return;}if(e.target instanceof HTMLSelectElement)return;if(e.code==='Space'||e.key.startsWith('Arrow')){e.preventDefault();if(e.repeat)return;if(e.code==='Space'){if(game.turn===0&&game.phase==='aim')game.shoot();}else{adjust(e.key);keys.set(e.key,{time:0,next:TUNING.keyDelay});}}});window.addEventListener('keyup',e=>{keys.delete(e.key);if(['KeyA','KeyD'].includes(e.code))game.setDrive(0);});window.addEventListener('blur',()=>{keys.clear();game.setDrive(0);});document.addEventListener('visibilitychange',()=>{keys.clear();game.setDrive(0);last=0;accumulator=0;});
 function frame(ms){if(!last)last=ms;accumulator+=Math.min((ms-last)/1000,TUNING.maxFrame);last=ms;while(accumulator>=TUNING.step){tick(TUNING.step);accumulator-=TUNING.step;}
  terrain=game.terrain;tanks=game.tanks;shot=game.projectiles[0];ghost=game.ghost;clock=game.clock;
  if(terrainRef!==terrain||terrainVersion!==terrain.version){rebuildTerrain();terrainRef=terrain;terrainVersion=terrain.version;}
