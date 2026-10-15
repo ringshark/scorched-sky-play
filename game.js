@@ -296,35 +296,88 @@ if(typeof document!=='undefined'){
 const game=new DuelGame();
 const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d');
 const terrainCanvas=document.createElement('canvas');terrainCanvas.width=TUNING.width;terrainCanvas.height=TUNING.height;const tc=terrainCanvas.getContext('2d');
+const litTerrain=document.createElement('canvas');litTerrain.width=TUNING.width;litTerrain.height=TUNING.height;const litBrush=litTerrain.getContext('2d');
 const angle=document.querySelector('#angle'),power=document.querySelector('#power'),fire=document.querySelector('#fire'),status=document.querySelector('#status'),windLabel=document.querySelector('#wind'),weaponSelect=document.querySelector('#weapon');
 let terrain=game.terrain,tanks=game.tanks,shot=null,ghost=[],clock=0,particles=[],blast=null,blasts=[],floatTexts=[],shake=0,terrainVersion=-1,terrainRef=null,accumulator=0,last=0,uiStamp='';
 const keys=new Map();
+// Scenery assets never consume the gameplay RNG or mutate the terrain model.
+// The existing sky is retained as a synchronous/offline-safe fallback.
+const paintedSky=new Image();
+paintedSky.src='assets/scorched-sunset-v1.webp';
+const skyPlate=document.createElement('canvas');skyPlate.width=TUNING.width;skyPlate.height=TUNING.height;
+const skyBrush=skyPlate.getContext('2d');let skyReady=false;
+paintedSky.onload=()=>{
+ skyBrush.drawImage(paintedSky,0,0,TUNING.width,TUNING.height);
+ const veil=skyBrush.createLinearGradient(0,0,0,142);veil.addColorStop(0,'#ffe7d333');veil.addColorStop(1,'#ffe7d300');skyBrush.fillStyle=veil;skyBrush.fillRect(0,0,TUNING.width,142);
+ skyReady=true;
+};
+// Cached, softly feathered wisps drift below the island; all hard geometry
+// remains in the original collision cells. No new platforms or obstacles.
+const mistPlate=document.createElement('canvas');mistPlate.width=840;mistPlate.height=150;
+const mistBrush=mistPlate.getContext('2d');
+for(let i=0;i<21;i++){
+ const x=30+i*39,y=77+Math.sin(i*1.9)*18,r=40+Math.sin(i*2.7)*10;
+ const puff=mistBrush.createRadialGradient(x,y,0,x,y,r);
+ puff.addColorStop(0,'#fff0d134');puff.addColorStop(.5,'#fce9d719');puff.addColorStop(1,'#e5daeb00');
+ mistBrush.fillStyle=puff;mistBrush.fillRect(x-r,y-r,r*2,r*2);
+}
+const soilPlate=document.createElement('canvas');soilPlate.width=TUNING.width;soilPlate.height=TUNING.height;
+const soilBrush=soilPlate.getContext('2d');
+const earth=soilBrush.createLinearGradient(0,270,0,590);
+earth.addColorStop(0,'#dba66c');earth.addColorStop(.22,'#ba8052');earth.addColorStop(.55,'#986442');earth.addColorStop(.84,'#775047');earth.addColorStop(1,'#513c45');
+soilBrush.fillStyle=earth;soilBrush.fillRect(0,0,TUNING.width,TUNING.height);
+// Broad curving mineral seams, rather than a repeated grid pattern.
+for(let layer=0;layer<8;layer++){
+ const base=302+layer*36;soilBrush.beginPath();soilBrush.moveTo(0,base);
+ for(let x=0;x<=TUNING.width;x+=16){const y=base+Math.sin(x*.008+layer*.8)*11+Math.sin(x*.019-layer)*3;soilBrush.lineTo(x,y);}
+ soilBrush.lineTo(TUNING.width,base+22);soilBrush.lineTo(0,base+22);soilBrush.closePath();
+ soilBrush.fillStyle=layer%2?'#382f371c':'#edb77524';soilBrush.fill();
+}
+const sceneryHash=(x,y)=>{const n=Math.sin(x*12.9898+y*78.233)*43758.5453;return n-Math.floor(n);};
+// Stable fine grain and sparse embedded rock facets, baked only once.
+for(let y=272;y<590;y+=4)for(let x=0;x<TUNING.width;x+=5){
+ const n=sceneryHash(x,y);if(n>.64){soilBrush.fillStyle=n>.87?'#ffe0a317':'#382c3116';soilBrush.fillRect(x,y,1+n*2,1);}
+}
+for(let y=305;y<580;y+=31)for(let x=106;x<1180;x+=37){
+ const n=sceneryHash(x,y);if(n<.63)continue;
+ const px=x+(n-.5)*18,py=y+Math.sin(x*.03)*9,w=3+n*6,h=2+n*3;
+ soilBrush.fillStyle='#352d3a36';soilBrush.beginPath();soilBrush.ellipse(px+1,py+2,w+1,h+1,.2,0,Math.PI*2);soilBrush.fill();
+ soilBrush.fillStyle=n>.85?'#d3a472':'#8f7061';soilBrush.beginPath();soilBrush.moveTo(px-w,py);soilBrush.lineTo(px-w*.4,py-h);soilBrush.lineTo(px+w*.7,py-h*.5);soilBrush.lineTo(px+w,py+h*.4);soilBrush.lineTo(px-w*.2,py+h);soilBrush.closePath();soilBrush.fill();
+ soilBrush.strokeStyle='#ffd6a24a';soilBrush.lineWidth=1;soilBrush.beginPath();soilBrush.moveTo(px-w,py);soilBrush.lineTo(px-w*.4,py-h);soilBrush.lineTo(px+w*.7,py-h*.5);soilBrush.stroke();
+}
 function rebuildTerrain(){
  tc.clearRect(0,0,TUNING.width,TUNING.height);
- // Draw every visible dirt cell; cut boundaries stay faithful to collision.
+ // The visible silhouette is exactly the original dirt occupancy mask.
+ tc.fillStyle='#fff';
+ for(let r=0;r<terrain.rows;r++)for(let c=0;c<terrain.cols;c++)if(terrain.data[r*terrain.cols+c])tc.fillRect(c*TUNING.cell,r*TUNING.cell,TUNING.cell,TUNING.cell);
+ tc.globalCompositeOperation='source-in';tc.drawImage(soilPlate,0,0);tc.globalCompositeOperation='source-over';
+ // Light catches the top and right of every exposed cut; the underside
+ // stays shaded. This treatment also follows tunnels and through-holes.
  for(let r=0;r<terrain.rows;r++)for(let c=0;c<terrain.cols;c++)if(terrain.data[r*terrain.cols+c]){
   const x=c*TUNING.cell,y=r*TUNING.cell;
-  const layer=Math.sin(y*.046+Math.sin(x*.007)*.8);
-  tc.fillStyle=layer>.5?'#b66e42':layer<-.6?'#a05b3b':'#c1804d';
-  tc.fillRect(x,y,TUNING.cell,TUNING.cell);
-  if(!terrain.solid(x,y-TUNING.cell)){tc.fillStyle='#5f4537';tc.fillRect(x,y,TUNING.cell,TUNING.cell);}
-  if(!terrain.solid(x,y+TUNING.cell)){tc.fillStyle='#694537';tc.fillRect(x,y,TUNING.cell,TUNING.cell);}
+  if(!terrain.solid(x,y-TUNING.cell)){tc.fillStyle='#f2c18b';tc.fillRect(x,y,TUNING.cell,1);}
+  if(!terrain.solid(x,y+TUNING.cell)){tc.fillStyle='#362d3f80';tc.fillRect(x,y+TUNING.cell-2,TUNING.cell,2);}
+  if(!terrain.solid(x-TUNING.cell,y)){tc.fillStyle='#40303f55';tc.fillRect(x,y,1,TUNING.cell);}
  }
- // A thin living rim only on the exposed top, not the floor of a tunnel.
+ tc.save();tc.globalCompositeOperation='source-atop';tc.strokeStyle='#694a3f66';tc.lineWidth=1;
+ for(let c=0;c<terrain.cols;c+=19){
+  const x=c*TUNING.cell,top=terrain.originalTop[c];if(!Number.isFinite(top)||terrain.floor(x,0)!==top)continue;
+  tc.beginPath();tc.moveTo(x,top+2);tc.bezierCurveTo(x+3,top+11,x-5,top+20,x+2,top+34);tc.moveTo(x,top+15);tc.lineTo(x+9,top+23);tc.stroke();
+ }tc.restore();
+ // Existing grass only: freshly excavated craters and added mounds stay bare.
  for(let c=0;c<terrain.cols;c++){
   const x=c*TUNING.cell,y=terrain.floor(x,0);if(!Number.isFinite(y))continue;
-  const intact=y===terrain.originalTop[c];tc.fillStyle=intact?'#6f763c':'#88543b';tc.fillRect(x,y,TUNING.cell,5);
-  tc.fillStyle=intact?'#b7bf65':'#e6ad70';tc.fillRect(x,y,TUNING.cell,2);
-  if(intact&&c%7===0&&terrain.solid(x,y+12)){tc.strokeStyle='#a3ad57';tc.lineWidth=1.5;tc.beginPath();tc.moveTo(x+2,y);tc.lineTo(x-1,y-5);tc.moveTo(x+2,y);tc.lineTo(x+5,y-3);tc.stroke();}
- }
- // Coordinate hashing keeps stones still when a crater redraws the island.
- for(let x=110;x<1180;x+=17)for(let y=325;y<570;y+=19){
-  const hash=Math.abs(Math.sin(x*12.9898+y*78.233)*43758.5453)%1;
-  if(hash>.72&&terrain.solid(x-4,y)&&terrain.solid(x+5,y+3)&&terrain.solid(x,y-4)){
-   tc.fillStyle=hash>.9?'#dfaa70':'#8e573d';tc.beginPath();tc.ellipse(x,y,3+hash*4,2+hash*2,.3,0,Math.PI*2);tc.fill();
-   tc.strokeStyle='#efbf813f';tc.beginPath();tc.moveTo(x-3,y-1);tc.lineTo(x+2,y-2);tc.stroke();
+  const intact=y===terrain.originalTop[c];
+  tc.fillStyle=intact?'#666b3c':'#ae774d';tc.fillRect(x,y,TUNING.cell,intact?5:2);
+  tc.fillStyle=intact?'#bfc57b':'#ecc08d';tc.fillRect(x,y,TUNING.cell,1);
+  if(intact&&c%7===0&&terrain.solid(x,y+12)){
+   tc.strokeStyle=c%2?'#bdc676':'#8c9b57';tc.lineWidth=1.5;tc.beginPath();tc.moveTo(x+2,y);tc.lineTo(x-1,y-5);tc.moveTo(x+2,y);tc.lineTo(x+5,y-3);tc.stroke();
   }
  }
+ // Bake expensive soft lighting only when dirt actually changes.
+ litBrush.clearRect(0,0,TUNING.width,TUNING.height);litBrush.save();
+ litBrush.shadowColor='#42334766';litBrush.shadowBlur=24;litBrush.shadowOffsetY=15;
+ litBrush.drawImage(terrainCanvas,0,0);litBrush.restore();
 }
 function rounded(x,y,w,h,r,color){ctx.fillStyle=color;ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.fill();}
 function ellipse(x,y,rx,ry,color){ctx.fillStyle=color;ctx.beginPath();ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2);ctx.fill();}
@@ -351,7 +404,7 @@ function drawTank(t){
  rounded(-recoil,-6,TUNING.barrel,12,3,'#303b48');rounded(-recoil,-4,TUNING.barrel,8,2,dark);rounded(2-recoil,-4,TUNING.barrel-5,3,1,light);rounded(TUNING.barrel-6-recoil,-7,9,14,3,'#35424c');rounded(TUNING.barrel-4-recoil,-5,6,10,2,t.color);
  ctx.restore();
 }
-function drawSky(){
+function drawFallbackSky(){
  const sky=ctx.createLinearGradient(0,0,0,TUNING.height);sky.addColorStop(0,'#df8978');sky.addColorStop(.48,'#ffd995');sky.addColorStop(.78,'#f4d6af');sky.addColorStop(1,'#9faec7');ctx.fillStyle=sky;ctx.fillRect(0,0,TUNING.width,TUNING.height);
  const halo=ctx.createRadialGradient(920,188,20,920,188,230);halo.addColorStop(0,'#fff6b9ae');halo.addColorStop(1,'#fff6b900');ctx.fillStyle=halo;ctx.fillRect(650,0,540,450);
  ellipse(920,188,63,63,'#fff2ba');
@@ -361,9 +414,18 @@ function drawSky(){
   for(let j=0;j<4;j++){ellipse(x+j*34,y+9,61,21+j%2*8,'#c7bfd066');ellipse(x+j*34,y,58,18+j%2*9,'#fff1db');}
  }
 }
+function drawSky(){
+ if(!skyReady){drawFallbackSky();return;}
+ ctx.drawImage(skyPlate,0,0);
+ // Slow atmospheric motion entirely below the gameplay surface. These
+ // wisps are translucent: a falling tank stays visible past the clouds.
+ const drift=(clock*4)%1900;
+ ctx.drawImage(mistPlate,drift-840,575,840,150);
+ ctx.globalAlpha=.52;ctx.drawImage(mistPlate,1060-drift*.45,607,1100,150);ctx.globalAlpha=1;
+}
 function render(){
- drawSky();ctx.save();if(shake>0)ctx.translate(Math.sin(clock*93)*TUNING.shakePixels*shake/TUNING.shakeTime,Math.cos(clock*81)*TUNING.shakePixels*shake/TUNING.shakeTime);ctx.save();ctx.shadowColor='#694d4c50';ctx.shadowBlur=22;ctx.shadowOffsetY=13;ctx.drawImage(terrainCanvas,0,0);ctx.restore();
- for(const path of ghost){ctx.strokeStyle=`rgba(255,255,255,${TUNING.ghostOpacity})`;ctx.lineWidth=3;ctx.setLineDash([4,10]);ctx.beginPath();path.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.stroke();ctx.setLineDash([]);}
+ drawSky();ctx.save();if(shake>0)ctx.translate(Math.sin(clock*93)*TUNING.shakePixels*shake/TUNING.shakeTime,Math.cos(clock*81)*TUNING.shakePixels*shake/TUNING.shakeTime);ctx.drawImage(litTerrain,0,0);
+ for(const path of ghost){ctx.setLineDash([4,10]);ctx.beginPath();path.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.strokeStyle='#49384b26';ctx.lineWidth=5;ctx.stroke();ctx.strokeStyle=`rgba(255,255,255,${TUNING.ghostOpacity})`;ctx.lineWidth=3;ctx.stroke();ctx.setLineDash([]);}
  tanks.forEach(drawTank);
  for(const p of game.projectiles){ellipse(p.x,p.y,9,9,'#ffefbd22');ellipse(p.x,p.y,p.weapon==='heavy'?7:4,p.weapon==='heavy'?7:4,p.weapon==='dirt'?'#b4c570':p.weapon==='roller'?'#e2bb7d':p.weapon==='drill'?'#b7d4df':'#fff4c9');}
  for(const p of particles){ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.age*9);rounded(-3,-3,6,6,1,'#945537');ctx.restore();}
