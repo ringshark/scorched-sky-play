@@ -1,24 +1,5 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Scorched Sky — coming soon</title>
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Scorched Sky · Slice 1</title>
 <style>
-  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
-         background: linear-gradient(#2b1055, #7597de 55%, #ff9a5a); font-family: system-ui, sans-serif; color:#fff; text-align:center; }
-  .card { padding: 2rem; }
-  h1 { font-size: 3rem; margin: 0 0 .5rem; letter-spacing:.05em; }
-  p { opacity:.9; max-width: 34rem; }
-</style>
-</head>
-<body>
-  <div class="card">
-    <h1>SCORCHED SKY</h1>
-    <p>Two cartoon tanks. One floating dirt island. Angle, power, wind —
-    blow him up, drop him, or bury him.</p>
-    <p><strong>Slice 1 not built yet.</strong> Design is locked; see the
-    source repo's <code>design/</code> folder for the build plan and handoff.</p>
-  </div>
-</body>
-</html>
+*{box-sizing:border-box}body{margin:0;background:#292b43;color:#fff1db;font:16px system-ui,sans-serif;min-height:100svh;display:grid;place-items:center}.game{position:relative;width:min(100vw,177.7778svh);aspect-ratio:16/9;overflow:hidden;border-radius:12px;box-shadow:0 24px 100px #15182a}canvas{width:100%;height:100%;display:block}header{position:absolute;top:3%;left:3%;right:3%;display:flex;justify-content:space-between;align-items:start;color:#453b4c}h1{font-size:clamp(16px,2.5vw,32px);margin:0;letter-spacing:.08em}small{font-size:clamp(10px,1.15vw,15px)}.right{text-align:right}#status{font-weight:750;font-size:clamp(12px,1.6vw,21px);margin-top:8px}.controls{position:absolute;bottom:3%;left:3%;right:3%;display:flex;align-items:center;gap:3%;padding:1.5% 2%;border-radius:18px;background:#30344bee;box-shadow:0 6px 20px #28344b33}.controls label{flex:1;font-weight:bold;font-size:clamp(12px,1.4vw,18px)}input{width:100%;height:32px;accent-color:#65d5f1;touch-action:pan-x}button{cursor:pointer;border:0;border-radius:10px;padding:14px 22px;font:750 clamp(12px,1.4vw,18px) system-ui;background:#fff0ce;color:#40394b;min-height:44px}#fire{background:#ff845e;min-width:17%}button:disabled{opacity:.45;cursor:default}input:disabled{opacity:.45}#wind{font-weight:bold;font-size:clamp(16px,2vw,26px)}.hint{position:absolute;bottom:19%;width:100%;text-align:center;color:#534756;font-size:clamp(10px,1.1vw,14px);pointer-events:none}@media(max-height:440px){.controls{bottom:2%;padding:1% 2%}button{padding:10px 14px}.hint{display:none}header{top:2%}}
+</style></head><body><main class="game" aria-label="Scorched Sky artillery duel"><canvas width="1280" height="720" aria-label="Floating island and two tanks"></canvas><header><div><h1>SCORCHED SKY</h1><small>SLICE 01 · CORE FEEL · RING-OUT DUEL</small><div id="status" role="status" aria-live="polite"></div></div><div class="right"><div id="wind"></div><small>Standard Shell · unlimited</small></div></header><div class="hint">Excavate the ground beneath Rookie. Falling off ends the round. HP arrives in Slice 2.</div><section class="controls" aria-label="Aiming controls"><label>ANGLE <span id="angleValue"></span><input id="angle" aria-label="Angle" type="range" min="0" max="180" step="1"></label><label>POWER <span id="powerValue"></span><input id="power" aria-label="Power" type="range" min="0" max="100" step="1"></label><button id="fire">FIRE ↗</button><button id="restart">Restart</button></section></main><script src="game.js"></script></body></html>
