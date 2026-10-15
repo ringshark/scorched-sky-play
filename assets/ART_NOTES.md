@@ -1,3 +1,16 @@
+# Current scenery — 2026-10-15
+
+The shipped background is now a code-drawn Canvas illustration in
+`game.js`: cached sunset, rounded layered cloud banks, and translucent
+moving mist. Terrain shares its warm peach highlights and violet shadows.
+This replaces the image below to match the chunky cartoon tanks. No image
+is loaded at runtime. Gameplay, collision terrain and tank art are unchanged.
+
+## Archived painted sunset asset
+
+The following documents the earlier, unused artwork retained in this folder.
+The runtime and fallback descriptions below refer to that earlier release.
+
 # Painted sunset scenery — 2026-10-15
 
 - Runtime asset: `game/assets/scorched-sunset-v1.webp` (1672×941, 108,244 bytes).

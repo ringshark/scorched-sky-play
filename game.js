@@ -300,17 +300,41 @@ const litTerrain=document.createElement('canvas');litTerrain.width=TUNING.width;
 const angle=document.querySelector('#angle'),power=document.querySelector('#power'),fire=document.querySelector('#fire'),status=document.querySelector('#status'),windLabel=document.querySelector('#wind'),weaponSelect=document.querySelector('#weapon');
 let terrain=game.terrain,tanks=game.tanks,shot=null,ghost=[],clock=0,particles=[],blast=null,blasts=[],floatTexts=[],shake=0,terrainVersion=-1,terrainRef=null,accumulator=0,last=0,uiStamp='';
 const keys=new Map();
-// Scenery assets never consume the gameplay RNG or mutate the terrain model.
-// The existing sky is retained as a synchronous/offline-safe fallback.
-const paintedSky=new Image();
-paintedSky.src='assets/scorched-sunset-v1.webp';
+// Code-drawn scenery shares the tanks' rounded shapes and warm/cool shading.
+// Cache it once; no asset downloads, gameplay RNG, or collision changes.
 const skyPlate=document.createElement('canvas');skyPlate.width=TUNING.width;skyPlate.height=TUNING.height;
-const skyBrush=skyPlate.getContext('2d');let skyReady=false;
-paintedSky.onload=()=>{
- skyBrush.drawImage(paintedSky,0,0,TUNING.width,TUNING.height);
- const veil=skyBrush.createLinearGradient(0,0,0,142);veil.addColorStop(0,'#ffe7d333');veil.addColorStop(1,'#ffe7d300');skyBrush.fillStyle=veil;skyBrush.fillRect(0,0,TUNING.width,142);
- skyReady=true;
-};
+const skyBrush=skyPlate.getContext('2d');
+function skyEllipse(x,y,rx,ry,color){skyBrush.fillStyle=color;skyBrush.beginPath();skyBrush.ellipse(x,y,rx,ry,0,0,Math.PI*2);skyBrush.fill();}
+function bakeSky(){
+ const sky=skyBrush.createLinearGradient(0,0,0,720);
+ sky.addColorStop(0,'#a899be');sky.addColorStop(.24,'#dfa2ac');sky.addColorStop(.55,'#f8bc8b');sky.addColorStop(.78,'#f9d49d');sky.addColorStop(1,'#b5a5bf');
+ skyBrush.fillStyle=sky;skyBrush.fillRect(0,0,1280,720);
+ const glow=skyBrush.createRadialGradient(965,238,35,965,238,390);
+ glow.addColorStop(0,'#fff1b5b0');glow.addColorStop(.5,'#ffde9c44');glow.addColorStop(1,'#ffde9c00');
+ skyBrush.fillStyle=glow;skyBrush.fillRect(550,0,730,670);
+ // Broad, quiet bands keep the firing area legible.
+ for(let i=0;i<6;i++){
+  const x=90+i*237,y=152+(i%3)*38;
+  skyEllipse(x,y,125+(i%2)*45,7,'#ffe0ba35');skyEllipse(x+49,y-5,64,10,'#ffe7c32b');
+ }
+ skyEllipse(965,238,64,64,'#ffe7ac35');skyEllipse(965,238,53,53,'#ffeab795');skyEllipse(965,238,46,46,'#fff1c5');
+ // Three banks of sculpted cloud puffs. Luminous upper rims and mauve
+ // undersides use the same lighting language as the armor and dirt.
+ for(let layer=0;layer<3;layer++){
+  const base=550+layer*77;
+  skyBrush.fillStyle=['#c3a1b5','#aa91b0','#817eaa'][layer];skyBrush.fillRect(0,base+30,1280,720-base);
+  for(let i=-1;i<13;i++){
+   const x=i*119+(layer%2)*57,y=base+Math.sin(i*2.3+layer)*23;
+   const r=48+(Math.sin(i*3.1+layer)+1)*15;
+   skyEllipse(x,y+20,r*1.4,r*.65,['#bc98ae','#a58aaa','#807ba4'][layer]);
+   skyEllipse(x,y-3,r*1.32,r*.69,['#f2c3b1','#e3b8b3','#b7a0bf'][layer]);
+   skyEllipse(x-22,y-18,r*.69,r*.58,['#ffe0b6','#f5cdb9','#d2b3c4'][layer]);
+   skyEllipse(x+29,y-7,r*.83,r*.48,['#ffdbb0','#edc3b7','#c4a9c0'][layer]);
+   skyEllipse(x+9,y+22,r*1.14,r*.26,['#e1afaa','#c7a2b0','#9b8eaf'][layer]);
+  }
+ }
+}
+bakeSky();
 // Cached, softly feathered wisps drift below the island; all hard geometry
 // remains in the original collision cells. No new platforms or obstacles.
 const mistPlate=document.createElement('canvas');mistPlate.width=840;mistPlate.height=150;
@@ -324,14 +348,14 @@ for(let i=0;i<21;i++){
 const soilPlate=document.createElement('canvas');soilPlate.width=TUNING.width;soilPlate.height=TUNING.height;
 const soilBrush=soilPlate.getContext('2d');
 const earth=soilBrush.createLinearGradient(0,270,0,590);
-earth.addColorStop(0,'#dba66c');earth.addColorStop(.22,'#ba8052');earth.addColorStop(.55,'#986442');earth.addColorStop(.84,'#775047');earth.addColorStop(1,'#513c45');
+earth.addColorStop(0,'#edb681');earth.addColorStop(.22,'#ca8b62');earth.addColorStop(.55,'#a76d59');earth.addColorStop(.84,'#77576a');earth.addColorStop(1,'#51465f');
 soilBrush.fillStyle=earth;soilBrush.fillRect(0,0,TUNING.width,TUNING.height);
 // Broad curving mineral seams, rather than a repeated grid pattern.
 for(let layer=0;layer<8;layer++){
  const base=302+layer*36;soilBrush.beginPath();soilBrush.moveTo(0,base);
  for(let x=0;x<=TUNING.width;x+=16){const y=base+Math.sin(x*.008+layer*.8)*11+Math.sin(x*.019-layer)*3;soilBrush.lineTo(x,y);}
  soilBrush.lineTo(TUNING.width,base+22);soilBrush.lineTo(0,base+22);soilBrush.closePath();
- soilBrush.fillStyle=layer%2?'#382f371c':'#edb77524';soilBrush.fill();
+ soilBrush.fillStyle=layer%2?'#44334820':'#ffd19730';soilBrush.fill();
 }
 const sceneryHash=(x,y)=>{const n=Math.sin(x*12.9898+y*78.233)*43758.5453;return n-Math.floor(n);};
 // Stable fine grain and sparse embedded rock facets, baked only once.
@@ -339,10 +363,10 @@ for(let y=272;y<590;y+=4)for(let x=0;x<TUNING.width;x+=5){
  const n=sceneryHash(x,y);if(n>.64){soilBrush.fillStyle=n>.87?'#ffe0a317':'#382c3116';soilBrush.fillRect(x,y,1+n*2,1);}
 }
 for(let y=305;y<580;y+=31)for(let x=106;x<1180;x+=37){
- const n=sceneryHash(x,y);if(n<.63)continue;
+ const n=sceneryHash(x,y);if(n<.79)continue;
  const px=x+(n-.5)*18,py=y+Math.sin(x*.03)*9,w=3+n*6,h=2+n*3;
  soilBrush.fillStyle='#352d3a36';soilBrush.beginPath();soilBrush.ellipse(px+1,py+2,w+1,h+1,.2,0,Math.PI*2);soilBrush.fill();
- soilBrush.fillStyle=n>.85?'#d3a472':'#8f7061';soilBrush.beginPath();soilBrush.moveTo(px-w,py);soilBrush.lineTo(px-w*.4,py-h);soilBrush.lineTo(px+w*.7,py-h*.5);soilBrush.lineTo(px+w,py+h*.4);soilBrush.lineTo(px-w*.2,py+h);soilBrush.closePath();soilBrush.fill();
+ soilBrush.fillStyle=n>.9?'#e5b182':'#a27a77';soilBrush.beginPath();soilBrush.moveTo(px-w,py);soilBrush.lineTo(px-w*.4,py-h);soilBrush.lineTo(px+w*.7,py-h*.5);soilBrush.lineTo(px+w,py+h*.4);soilBrush.lineTo(px-w*.2,py+h);soilBrush.closePath();soilBrush.fill();
  soilBrush.strokeStyle='#ffd6a24a';soilBrush.lineWidth=1;soilBrush.beginPath();soilBrush.moveTo(px-w,py);soilBrush.lineTo(px-w*.4,py-h);soilBrush.lineTo(px+w*.7,py-h*.5);soilBrush.stroke();
 }
 function rebuildTerrain(){
@@ -368,8 +392,9 @@ function rebuildTerrain(){
  for(let c=0;c<terrain.cols;c++){
   const x=c*TUNING.cell,y=terrain.floor(x,0);if(!Number.isFinite(y))continue;
   const intact=y===terrain.originalTop[c];
-  tc.fillStyle=intact?'#666b3c':'#ae774d';tc.fillRect(x,y,TUNING.cell,intact?5:2);
-  tc.fillStyle=intact?'#bfc57b':'#ecc08d';tc.fillRect(x,y,TUNING.cell,1);
+  if(intact){tc.fillStyle='#554953';tc.fillRect(x,y+4,TUNING.cell,3);}
+  tc.fillStyle=intact?'#687953':'#bf8969';tc.fillRect(x,y,TUNING.cell,intact?5:2);
+  tc.fillStyle=intact?'#d5d599':'#ffd6a0';tc.fillRect(x,y,TUNING.cell,1);
   if(intact&&c%7===0&&terrain.solid(x,y+12)){
    tc.strokeStyle=c%2?'#bdc676':'#8c9b57';tc.lineWidth=1.5;tc.beginPath();tc.moveTo(x+2,y);tc.lineTo(x-1,y-5);tc.moveTo(x+2,y);tc.lineTo(x+5,y-3);tc.stroke();
   }
@@ -404,18 +429,7 @@ function drawTank(t){
  rounded(-recoil,-6,TUNING.barrel,12,3,'#303b48');rounded(-recoil,-4,TUNING.barrel,8,2,dark);rounded(2-recoil,-4,TUNING.barrel-5,3,1,light);rounded(TUNING.barrel-6-recoil,-7,9,14,3,'#35424c');rounded(TUNING.barrel-4-recoil,-5,6,10,2,t.color);
  ctx.restore();
 }
-function drawFallbackSky(){
- const sky=ctx.createLinearGradient(0,0,0,TUNING.height);sky.addColorStop(0,'#df8978');sky.addColorStop(.48,'#ffd995');sky.addColorStop(.78,'#f4d6af');sky.addColorStop(1,'#9faec7');ctx.fillStyle=sky;ctx.fillRect(0,0,TUNING.width,TUNING.height);
- const halo=ctx.createRadialGradient(920,188,20,920,188,230);halo.addColorStop(0,'#fff6b9ae');halo.addColorStop(1,'#fff6b900');ctx.fillStyle=halo;ctx.fillRect(650,0,540,450);
- ellipse(920,188,63,63,'#fff2ba');
- // Soft high haze, then low cloudbanks beneath the finite island.
- ctx.fillStyle='#fff5dc22';ctx.beginPath();ctx.ellipse(530,190,220,6,-.04,0,Math.PI*2);ctx.fill();
- for(let i=0;i<9;i++){const x=((i*193+clock*(3+i%3))%1500)-110,y=592+(i%3)*37;
-  for(let j=0;j<4;j++){ellipse(x+j*34,y+9,61,21+j%2*8,'#c7bfd066');ellipse(x+j*34,y,58,18+j%2*9,'#fff1db');}
- }
-}
 function drawSky(){
- if(!skyReady){drawFallbackSky();return;}
  ctx.drawImage(skyPlate,0,0);
  // Slow atmospheric motion entirely below the gameplay surface. These
  // wisps are translucent: a falling tank stays visible past the clouds.
