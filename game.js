@@ -61,7 +61,7 @@ const RIVALS=Object.freeze([
   {name:'Deadeye',title:'Protect the ground beneath you',color:'#b596e6',light:'#e8d2ff',dark:'#6f519f',angleError:TUNING.deadeyeAngleError,initialError:TUNING.deadeyeInitialError,powerError:TUNING.deadeyePowerError,correction:TUNING.deadeyeCorrection,limit:TUNING.deadeyeCorrectionLimit},
 ]);
 class Terrain {
-  constructor(){this.cols=TUNING.width/TUNING.cell;this.rows=TUNING.height/TUNING.cell;this.data=new Uint8Array(this.cols*this.rows);this.version=0;this.originalTop=new Float32Array(this.cols).fill(Infinity);this.generate();}
+  constructor(width=TUNING.width){this.cols=width/TUNING.cell;this.rows=TUNING.height/TUNING.cell;this.data=new Uint8Array(this.cols*this.rows);this.version=0;this.originalTop=new Float32Array(this.cols).fill(Infinity);this.generate();}
   solid(x,y){const c=Math.floor(x/TUNING.cell),r=Math.floor(y/TUNING.cell);return c>=0&&c<this.cols&&r>=0&&r<this.rows&&!!this.data[r*this.cols+c];}
   generate(){const phase=random(0,Math.PI*2);for(let c=0;c<this.cols;c++){
     const x=c*TUNING.cell;if(x<TUNING.islandLeft||x>TUNING.islandRight)continue;
@@ -351,7 +351,7 @@ class DuelGame {
   }
 }
 if(typeof module!=='undefined')module.exports={TUNING,WEAPONS,DRAFT_POOL,RIVALS,Terrain,makeTank,moveTank,checkBurial,fallDamage,correctRookie,DuelGame};
-if(typeof document!=='undefined'){
+if(typeof document!=='undefined'&&document.querySelector('#classicGame')){
 const game=new DuelGame();
 const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d');
 const terrainCanvas=document.createElement('canvas');terrainCanvas.width=TUNING.width;terrainCanvas.height=TUNING.height;const tc=terrainCanvas.getContext('2d');
