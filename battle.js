@@ -8,7 +8,7 @@ const BATTLE_TUNING=Object.freeze({
  speed:78,tankDamage:30,rocketDamage:45,rocketInfantryDamage:28,
  tankCrater:46,rocketCrater:38,tankSplash:70,rocketSplash:62,
  gunRange:850,gunShots:6,gunDamage:5,gunArmorDamage:1,gunBuildingDamage:3,
- gunSpread:.018,gunInterval:.11,gunTraceLife:.18,
+ gunSpread:.018,gunInterval:.11,gunTraceLife:.18,gunMuzzleHeight:29,gunMuzzleForward:26,
  airCalls:1,airBombs:3,airSpacing:42,airDelay:.32,airStartY:-20,airSpeed:120,airDamage:24,airCrater:36,airSplash:58,
  aiDelay:1,aiMove:100,aiAngle:48,aiAngleError:4,aiPowerError:3,aiGuessError:10,
  aiCorrectionLimit:12,aiMinRange:90,aiAdvanceRange:680,aiAvoidanceGap:5,
@@ -68,8 +68,27 @@ class BattleGame extends BC.DuelGame {
   }return moved;
  }
  prepareAction(){this.actionOwner=this.turn;this.actionPaths=[];this.actionLandings=[];this.driveDirection=0;this.phase='flight';this.active.recoil=CT.recoilTime;this.shotOrigin={x:this.active.x,power:this.active.power,targetX:this.tanks[this.targetId]?.x??this.active.x};}
+ gunLine(shooter=this.active,target=this.tanks[this.targetId],spread=0){
+  if(!target||target.hp<=0||target.side===shooter.side)return {kind:'invalid'};
+  const ox=shooter.x,oy=shooter.y-BT.gunMuzzleHeight;
+  const angle=Math.atan2(target.y-CT.tankHeight/2-oy,target.x-ox)+spread;
+  const distance=Math.hypot(target.x-ox,target.y-CT.tankHeight/2-oy);
+  const line={angle,ox,oy,x:ox,y:oy,distance,kind:'range',id:null};
+  // Start at the shoulder: a close wall or buried muzzle cannot be skipped.
+  for(let d=0;d<=BT.gunRange;d+=CT.cell/2){
+   line.x=ox+Math.cos(angle)*d;line.y=oy+Math.sin(angle)*d;
+   const b=this.buildingAt(line.x,line.y);
+   if(b){line.kind='building';line.id=b.id;break;}
+   if(this.terrain.solid(line.x,line.y)||line.x<0||line.x>BT.width){line.kind='terrain';break;}
+   const hit=this.tanks.find(o=>o.id!==shooter.id&&o.hp>0&&Math.hypot(o.x-line.x,o.y-CT.tankHeight/2-line.y)<CT.directHitRadius);
+   if(hit){line.kind=hit.side===shooter.side?'friendly':'enemy';line.id=hit.id;break;}
+  }
+  const muzzle=Math.min(BT.gunMuzzleForward,Math.hypot(line.x-ox,line.y-oy));
+  line.mx=ox+Math.cos(angle)*muzzle;line.my=oy+Math.sin(angle)*muzzle;return line;
+ }
+ canShoot(){if(!this.canFire())return false;if(this.active.kind!=='gunner')return true;const line=this.gunLine();return !['invalid','range','terrain'].includes(line.kind);}
  shoot(){
-  if(!this.canFire()||!this.commit())return false;
+  if(!this.canShoot()||!this.commit())return false;
   const t=this.active;this.prepareAction();
   if(t.kind==='gunner'){
    const target=this.tanks[this.targetId];if(!target||target.hp<=0||target.side===t.side){this.finishAction();return false;}
@@ -89,17 +108,12 @@ class BattleGame extends BC.DuelGame {
  hold(){if(this.phase!=='aim'||!this.commit())return false;this.actionOwner=this.turn;this.finishAction();return true;}
  stepBurst(dt){
   const burst=this.burst;if(!burst)return;burst.timer-=dt;if(burst.timer>0)return;burst.timer=BT.gunInterval;
-  const t=this.tanks[burst.owner],target=this.tanks[burst.target],ox=t.x,oy=t.y-CT.tankHeight;
-  const angle=Math.atan2(target.y-CT.tankHeight/2-oy,target.x-ox)+bRandom(-BT.gunSpread,BT.gunSpread);
-  let x=ox,y=oy;
-  for(let d=CT.tankHalfWidth;d<=BT.gunRange;d+=CT.cell/2){
-   x=ox+Math.cos(angle)*d;y=oy+Math.sin(angle)*d;
-   const hit=this.tanks.find(o=>o.id!==t.id&&o.hp>0&&Math.hypot(o.x-x,o.y-CT.tankHeight/2-y)<CT.directHitRadius);
-   if(hit){this.damage(hit,hit.kind==='tank'?BT.gunArmorDamage:BT.gunDamage,'machine guns');break;}
-   const building=this.buildingAt(x,y);if(building){this.damageBuildings(x,y,{damage:BT.gunBuildingDamage,splash:1});break;}
-   if(this.terrain.solid(x,y)||x<0||x>BT.width)break;
-  }
-  this.emit('tracer',{x:ox,y:oy,tx:x,ty:y});this.actionPaths.push([[ox,oy],[x,y]]);
+  const t=this.tanks[burst.owner],target=this.tanks[burst.target];
+  if(!target||target.hp<=0){this.burst=null;return;}
+  const line=this.gunLine(t,target,bRandom(-BT.gunSpread,BT.gunSpread));
+  if(line.kind==='enemy'||line.kind==='friendly'){const hit=this.tanks[line.id];this.damage(hit,hit.kind==='tank'?BT.gunArmorDamage:BT.gunDamage,'machine guns');}
+  else if(line.kind==='building')this.damageBuildings(line.x,line.y,{damage:BT.gunBuildingDamage,splash:1});
+  this.emit('tracer',{x:line.mx,y:line.my,tx:line.x,ty:line.y,hit:line.kind,id:line.id});this.actionPaths.push([[line.mx,line.my],[line.x,line.y]]);
   if(--burst.left<=0)this.burst=null;
  }
  stepProjectile(p,dt){
@@ -146,7 +160,7 @@ class BattleGame extends BC.DuelGame {
   const t=this.active,enemies=this.tanks.filter(o=>o.side!==t.side&&o.hp>0);
   const target=enemies.sort((a,b)=>Math.abs(a.x-t.x)-Math.abs(b.x-t.x))[0];this.targetId=target.id;
   if(this.aiMoveLeft>0){
-   const gap=Math.abs(target.x-t.x);let direction=gap>BT.aiAdvanceRange?Math.sign(target.x-t.x):0;
+   const gap=Math.abs(target.x-t.x);const blockedGun=t.kind==='gunner'&&this.gunLine(t,target).kind==='terrain';let direction=gap>BT.aiAdvanceRange||blockedGun?Math.sign(target.x-t.x):0;
    const cover=this.buildings.filter(b=>b.hp>0&&(b.x-t.x)*(target.x-t.x)>0&&Math.abs(b.x-t.x)<BT.aiAdvanceRange).sort((a,b)=>Math.abs(a.x-t.x)-Math.abs(b.x-t.x))[0];
    if(t.kind!=='gunner'&&cover&&Math.abs(cover.x-t.x)>cover.width/2+CT.tankHalfWidth+BT.aiAvoidanceGap)direction=Math.sign(cover.x-t.x);
    const moved=direction?this.drive(direction,dt):0;this.aiMoveLeft=moved?Math.max(0,this.aiMoveLeft-moved):0;return;
@@ -154,7 +168,7 @@ class BattleGame extends BC.DuelGame {
   this.timer-=dt;if(this.timer>0||!this.canFire())return;
   if(this.air[this.side]>0&&(this.round>=2||enemies.some(o=>o!==target&&Math.abs(o.x-target.x)<BT.airSpacing*2))){this.callAir(target.x);return;}
   if(t.observation){const old=Math.abs(t.observation.targetX-t.observation.originX),now=Math.abs(target.x-t.x);if(old>BT.aiMinRange)t.aiPower=bClamp(t.aiPower*Math.sqrt(now/old),0,100);}
-  const elevation=BT.aiAngle+bRandom(-BT.aiAngleError,BT.aiAngleError);t.angle=Math.round(target.x<t.x?180-elevation:elevation);t.power=Math.round(bClamp(t.aiPower+bRandom(-BT.aiPowerError,BT.aiPowerError),0,100));this.shoot();
+  const elevation=BT.aiAngle+bRandom(-BT.aiAngleError,BT.aiAngleError);t.angle=Math.round(target.x<t.x?180-elevation:elevation);t.power=Math.round(bClamp(t.aiPower+bRandom(-BT.aiPowerError,BT.aiPowerError),0,100));if(this.canShoot())this.shoot();else this.hold();
  }
  update(dt){
   if(this.phase==='over')return;this.clock+=dt;

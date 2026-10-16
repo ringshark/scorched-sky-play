@@ -3,7 +3,7 @@
 // this file never changes units, collision terrain, turns or gameplay RNG.
 class BattleArt {
  constructor(){
-  this.unitsReady=false;this.plateReady=false;
+  this.unitsReady=false;this.plateReady=false;this.unitFacing=new Map();
   this.atlas=new Image();this.atlas.onload=()=>{this.unitsReady=true;};this.atlas.src='assets/battle-units-real-v1.webp';
   this.plate=new Image();this.plate.onload=()=>{this.plateReady=true;};this.plate.src='assets/scorched-sunset-v1.webp';
   this.crops=[[40,18,707,300],[792,19,710,300],[237,343,374,326],[987,344,378,326],[250,682,354,320],[1021,682,354,320]];
@@ -54,9 +54,9 @@ class BattleArt {
   c.fillStyle='#514e40';c.fillRect(b.x-8,b.y-24,16,24);c.fillStyle='#242c29';c.fillRect(b.x-6,b.y-21,12,21);c.fillStyle='#a28b64';c.fillRect(b.x+3,b.y-11,2,2);c.fillStyle='#424138';c.fillRect(x-3,b.y-4,b.width+6,5);
   if(b.hp<CT.buildingHP){c.strokeStyle='#292d28';c.lineWidth=1.6;c.beginPath();c.moveTo(b.x+3,y+1);c.lineTo(b.x-3,y+20);c.lineTo(b.x+4,y+31);c.lineTo(b.x-4,y+47);c.lineTo(b.x+1,b.y);c.stroke();c.fillStyle='#31352f99';c.fillRect(x+6,y+12,2,4);}
  }
- sprite(c,t,row,x,y,w,h){
+ sprite(c,t,row,x,y,w,h,facing=t.side?-1:1){
   const tile=this.crops?.[row*2+t.side];if(!tile)return false;
-  c.save();c.translate(x,y);if(t.side)c.scale(-1,1);c.imageSmoothingEnabled=true;c.imageSmoothingQuality='high';c.drawImage(this.atlas,...tile,-w/2,-h,w,h);c.restore();return true;
+  c.save();c.translate(x,y);if(facing<0)c.scale(-1,1);c.imageSmoothingEnabled=true;c.imageSmoothingQuality='high';c.drawImage(this.atlas,...tile,-w/2,-h,w,h);c.restore();return true;
  }
  tank(c,t,clock){
   c.save();c.translate(t.x,t.y);c.rotate(t.tilt);this.shadow(c,0,2,31,5);this.sprite(c,t,0,0,1,60,34);
@@ -67,9 +67,11 @@ class BattleArt {
  }
  infantry(c,t,clock){
   const moving=t.id===this.activeId&&this.moving;
+  if(t.kind==='gunner'&&t.id===this.activeId)this.unitFacing.set(t.id,this.gunFacing);
+  const facing=this.unitFacing.get(t.id)??(t.side?-1:1);
   for(const [i,offset] of [-11,0,11].entries()){
    const bob=moving?Math.sin(clock*13+i*2)*.7:0,x=t.x+offset,y=t.y+bob;
-   this.shadow(c,x,y+1,8,2);this.sprite(c,t,t.kind==='rocket'?2:1,x+(t.side?-7:7),y,38,35);
+   this.shadow(c,x,y+1,8,2);this.sprite(c,t,t.kind==='rocket'?2:1,x+facing*7,y,38,35,facing);
    c.fillStyle=t.side?'#c87f68':'#7fc4d1';c.fillRect(x+(t.side?3:-5),y-23,3,2);
   }
  }

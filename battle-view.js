@@ -19,7 +19,7 @@ function tank(t){if(art.unitsReady){art.tank(ctx,t,game.clock);return;}const lig
  const armor=ctx.createLinearGradient(0,-40,0,-15);armor.addColorStop(0,light);armor.addColorStop(.3,t.color);armor.addColorStop(1,dark);rect(ctx,-25,-31,50,18,4,'#3c3b4c');rect(ctx,-23,-30,46,15,4,armor);rect(ctx,-17,-27,32,3,1,light);rect(ctx,-12,-42,25,16,5,armor);rect(ctx,-8,-44,17,4,1,'#3d4b5c');ctx.restore();
  ctx.save();ctx.translate(t.x,t.y-CT.tankHeight);ctx.rotate(-t.angle*Math.PI/180);rect(ctx,0,-6,CT.barrel,12,3,'#374153');rect(ctx,1,-4,CT.barrel-2,8,2,dark);rect(ctx,2,-4,CT.barrel-4,3,1,light);rect(ctx,CT.barrel-5,-7,8,14,2,'#3b4858');ctx.restore();
 }
-function infantry(t){if(art.unitsReady){art.infantry(ctx,t,game.clock);return;}const direction=t.side?-1:1,light=t.side?'#ffc2a1':'#a2e6f0',dark=t.side?'#995450':'#397d90';
+function infantry(t){if(art.unitsReady){art.infantry(ctx,t,game.clock);return;}const direction=t.kind==='gunner'&&t.id===game.turn?art.gunFacing:(t.side?-1:1),light=t.side?'#ffc2a1':'#a2e6f0',dark=t.side?'#995450':'#397d90';
  for(const [i,offset] of [-12,0,12].entries()){
   const x=t.x+offset,y=t.y+(i===1?-2:0);ellipse(ctx,x,y+1,8,3,'#3c2d3c55');rect(ctx,x-5,y-10,4,10,1,'#464253');rect(ctx,x+2,y-10,4,10,1,'#464253');rect(ctx,x-7,y-23,14,15,3,dark);rect(ctx,x-5,y-22,10,5,1,t.color);rect(ctx,x-4,y-31,9,9,3,'#ecc29d');rect(ctx,x-6,y-34,13,7,3,t.color);rect(ctx,x-7,y-29,15,3,1,dark);rect(ctx,x-3,y-19,6,6,1,light);
   ctx.save();ctx.translate(x,y-19);ctx.scale(direction,1);if(t.kind==='rocket'){rect(ctx,-9,-4,28,7,2,'#404455');rect(ctx,12,-5,7,9,1,'#a9ac86');}else{rect(ctx,0,-1,23,4,1,'#333a48');rect(ctx,9,2,5,5,1,'#48505b');}ctx.restore();
@@ -33,7 +33,7 @@ function units(){for(const t of game.tanks){if(t.hp<=0){const y=game.terrain.flo
 function render(){
  background();if(version!==game.terrain.version||terrainRef!==game.terrain)bakeTerrain();ctx.save();ctx.translate(-camera,0);ctx.drawImage(terrainCanvas,0,0);buildings();
  const active=game.active;if(active.side===0)for(const path of active.ghost){if(path.length<2)continue;ctx.setLineDash([4,10]);ctx.strokeStyle='#fff5de50';ctx.lineWidth=2;ctx.beginPath();path.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.stroke();ctx.setLineDash([]);}
- art.activeId=game.turn;art.moving=game.phase==='aim'&&game.driveDirection!==0;units();
+ art.activeId=game.turn;art.gunFacing=Math.sign((game.tanks[game.targetId]?.x??game.active.x+1)-game.active.x)||1;art.moving=game.phase==='aim'&&game.driveDirection!==0;units();
  if(art.moving){const t=game.active;for(let i=0;i<3;i++){const progress=(game.clock*1.6+i*.31)%1;art.puff(ctx,t.x-game.driveDirection*(15+progress*25),t.y-progress*8,12+progress*19,(1-progress)*.14);}}
  for(const p of game.projectiles){if(p.delay>0)continue;
   if(p.kind==='rocket'){const path=p.path;ctx.save();ctx.strokeStyle='#c4baa675';ctx.lineWidth=2;ctx.beginPath();path.slice(-18).forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.stroke();ctx.translate(p.x,p.y);ctx.rotate(Math.atan2(p.vy,p.vx));rect(ctx,-7,-2,12,4,1,'#a8ac8d');art.polygon(ctx,[[5,-2],[9,0],[5,2]],'#485247');ctx.drawImage(art.flash,-18,-5,11,10);ctx.restore();}
@@ -53,18 +53,21 @@ function consume(){for(const e of game.events.splice(0)){
  if(e.type==='impact'){fx.push({...e,blast:true,age:0});for(let i=0;i<5;i++)smoke.push({x:e.x+(hash(i,e.x)-.5)*e.radius,y:e.y,seed:i,age:0});}
  if(e.type==='collapse')for(let i=0;i<5;i++)smoke.push({x:e.x+(hash(i,e.x)-.5)*e.width,y:e.y+15,seed:i,age:0});
  if(e.type==='collapse'||e.type==='chips'||e.type==='impact'){for(let i=0;i<(e.type==='chips'?8:BT.debrisCount);i++)fx.push({x:e.x,y:e.y,age:0,vx:bRandom(-BT.debrisSpeed,BT.debrisSpeed),vy:bRandom(-BT.debrisSpeed,-20)});}
+ if(e.type==='tracer'&&['building','terrain'].includes(e.hit))smoke.push({x:e.tx,y:e.ty,seed:e.id??0,age:1.6});
  if(e.type==='damage')texts.push({...e,age:0});if(e.type==='tracer')traces.push({...e,age:0});if(e.type==='air'){planes.push({x:e.x-300,y:140,age:0});follow=false;cameraTarget=bClamp(e.x-640,0,BT.width-1280);}
  if(e.type==='activation'){airArmed=false;airX=null;focusUnit();}
- if(e.type==='battle'){fx=[];smoke=[];traces=[];texts=[];planes=[];airArmed=false;airX=null;focusUnit();}
+ if(e.type==='battle'){art.unitFacing.clear();fx=[];smoke=[];traces=[];texts=[];planes=[];airArmed=false;airX=null;focusUnit();}
 }}
 function updateUI(){const t=game.active,human=game.phase==='aim'&&game.side===0,gun=t.kind==='gunner';
  $('battleStatus').textContent=game.result||`ROUND ${game.round} · ${game.side===0?'YOUR':'ENEMY'} ${UNIT_TYPES[t.kind].short}${game.phase==='flight'?' · attacking':game.phase==='settle'?' · settling':''}`;
  $('battleWind').textContent=`WIND ${game.wind<0?'←':'→'} ${Math.abs(game.wind)}`;
  $('moveValue').textContent=Math.ceil(t.driveLeft);angle.value=t.angle;power.value=t.power;$('angleRead').textContent=gun?'DIRECT':t.angle+'°';$('powerRead').textContent=gun?'BURST':t.power;
  angle.disabled=power.disabled=!human||gun||airArmed;target.disabled=!human;for(const id of ['moveLeft','moveRight'])$(id).disabled=!human||t.driveLeft<=0||t.embedded||airArmed;
- $('attack').disabled=!human||!game.canFire()||(airArmed&&airX===null);$('attack').textContent=airArmed?'CALL STRIKE':gun?'BURST':'FIRE';$('hold').disabled=!human;
+ const gunLine=gun?game.gunLine():null;
+ $('attack').disabled=!human||(airArmed?!game.canFire()||airX===null:!game.canShoot());$('attack').textContent=airArmed?'CALL STRIKE':gun?(gunLine.kind==='building'?'HIT COVER':gunLine.kind==='range'?'TOO FAR':gunLine.kind==='terrain'?'BLOCKED':'BURST'):'FIRE';$('hold').disabled=!human;
  $('airSupport').disabled=!human||game.air[0]<=0;$('airSupport').classList.toggle('armed',airArmed);$('airSupport').innerHTML=airArmed?'✕ CANCEL AIR<span>Tap ground → confirm</span>':`✈ AIRSTRIKE<span>${game.air[0]} call · replaces attack</span>`;
  $('instruction').textContent=airArmed?'Drag to pan · tap the ground to mark a strike · friendly fire is possible':human?(game.committed?'Unit committed · finish with an attack or Hold': 'Choose a ready unit · A/D or hold arrows to move · fire ends its activation'):'Enemy activation · drag the battlefield to inspect';
+ if(human&&gun&&!airArmed){const messages={enemy:'Clear shot · six-round burst · strongest against infantry',building:'Building blocks the target · this burst will damage the wall',terrain:'Ridge blocks the target · reposition for a clear shot',friendly:'Friendly unit blocks the target · this burst risks friendly fire',range:'Target is out of machine-gun range · move closer or choose another enemy',invalid:'Choose a living enemy target'};$('instruction').textContent=messages[gunLine.kind];}
  for(const card of document.querySelectorAll('[data-unit]')){const u=game.tanks[+card.dataset.unit];card.disabled=!human||u.hp<=0||u.used||(game.committed&&u!==t);card.classList.toggle('selected',u===t);card.innerHTML=`<strong>${UNIT_TYPES[u.kind].short}</strong><small>${u.hp<=0?'DESTROYED':u.used?'DONE THIS ROUND':u.hp+' HP · '+(u===t?'SELECTED':'READY')}</small><span class="life" style="width:${Math.max(0,u.hp/UNIT_TYPES[u.kind].hp*100)}%"></span>`;}
  const next=game.tanks.filter(u=>u.side===1&&u.hp>0).map(u=>u.id+':'+u.hp).join(',');if(next!==stamp){target.replaceChildren(...game.tanks.filter(u=>u.side===1&&u.hp>0).map(u=>{const o=document.createElement('option');o.value=u.id;o.textContent=UNIT_TYPES[u.kind].name+' · '+u.hp+' HP';return o;}));stamp=next;}
  target.value=game.targetId;$('result').hidden=game.phase!=='over';$('resultTitle').textContent=game.result;
