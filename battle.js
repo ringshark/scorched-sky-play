@@ -87,6 +87,37 @@ class BattleGame extends BC.DuelGame {
   line.mx=ox+Math.cos(angle)*muzzle;line.my=oy+Math.sin(angle)*muzzle;return line;
  }
  canShoot(){if(!this.canFire())return false;if(this.active.kind!=='gunner')return true;const line=this.gunLine();return !['invalid','range','terrain'].includes(line.kind);}
+ projectileFor(t=this.active){
+  const r=t.angle*Math.PI/180,s=CT.maxSpeed*t.power/100,pivot={x:t.x,y:t.y-CT.tankHeight};let distance=CT.barrel;
+  for(let d=0;d<=CT.barrel;d+=CT.cell/2)if(this.solid(pivot.x+Math.cos(r)*d,pivot.y-Math.sin(r)*d)){distance=d;break;}
+  return {x:pivot.x+Math.cos(r)*distance,y:pivot.y-Math.sin(r)*distance,vx:Math.cos(r)*s,vy:-Math.sin(r)*s,owner:t.id,kind:t.kind,weapon:'standard',alive:true,age:0,path:[],blocked:distance<CT.barrel};
+ }
+ // Pure flight stepping: the preview and the real shell use the same integrator.
+ // Only the caller resolves damage; this method mutates its projectile, never the world.
+ advanceProjectile(p,dt){
+  if(p.delay>0){p.delay-=dt;return null;}
+  p.age+=dt;p.vx+=(p.kind==='air'?0:this.wind)*dt;p.vy+=CT.gravity*dt;
+  const dx=p.vx*dt,dy=p.vy*dt,steps=Math.max(1,Math.ceil(Math.hypot(dx,dy)/(CT.cell/2)));
+  for(let i=0;i<steps;i++){
+   p.x+=dx/steps;p.y+=dy/steps;p.path.push([p.x,p.y]);
+   const hit=this.tanks.find(t=>t.hp>0&&Math.hypot(p.x-t.x,p.y-(t.y-CT.tankHeight/2))<CT.directHitRadius);
+   if(this.solid(p.x,p.y)||hit)return {hit:true,direct:hit?.id??null};
+   if(p.x<0||p.x>BT.width||p.y>CT.height||p.age>CT.projectileLife)return {hit:false,direct:null};
+  }return null;
+ }
+ aimingGuide(){
+  if(this.phase!=='aim'||this.side!==0||this.active.hp<=0)return null;
+  if(this.active.kind==='gunner'){
+   const line=this.gunLine();if(line.kind==='invalid')return null;
+   return {kind:'direct',points:[[line.mx,line.my],[line.x,line.y]],x:line.x,y:line.y,hit:line.kind};
+  }
+  const p=this.projectileFor(),points=[[p.x,p.y]];let result=p.blocked?{hit:true,direct:null}:null;
+  while(!result&&p.age<=CT.projectileLife)result=this.advanceProjectile(p,CT.step);
+  points.push(...p.path);
+  const target=result?.direct!==null?this.tanks[result?.direct]:null;
+  const hit=target?(target.side===this.side?'friendly':'enemy'):result?.hit?(this.buildingAt(p.x,p.y)?'building':'terrain'):'range';
+  return {kind:'arc',points,x:p.x,y:p.y,hit};
+ }
  shoot(){
   if(!this.canShoot()||!this.commit())return false;
   const t=this.active;this.prepareAction();
@@ -94,10 +125,8 @@ class BattleGame extends BC.DuelGame {
    const target=this.tanks[this.targetId];if(!target||target.hp<=0||target.side===t.side){this.finishAction();return false;}
    this.burst={left:BT.gunShots,timer:0,owner:t.id,target:target.id};return true;
   }
-  const r=t.angle*Math.PI/180,s=CT.maxSpeed*t.power/100,pivot={x:t.x,y:t.y-CT.tankHeight};let distance=CT.barrel;
-  for(let d=0;d<=CT.barrel;d+=CT.cell/2)if(this.solid(pivot.x+Math.cos(r)*d,pivot.y-Math.sin(r)*d)){distance=d;break;}
-  const p={x:pivot.x+Math.cos(r)*distance,y:pivot.y-Math.sin(r)*distance,vx:Math.cos(r)*s,vy:-Math.sin(r)*s,owner:t.id,kind:t.kind,weapon:'standard',alive:true,age:0,path:[]};
-  this.projectiles=[p];if(distance<CT.barrel)this.impact(p,true);this.emit('fire',{x:p.x,y:p.y});return true;
+  const p=this.projectileFor(t);
+  this.projectiles=[p];if(p.blocked)this.impact(p,true);this.emit('fire',{x:p.x,y:p.y});return true;
  }
  callAir(x){
   if(!Number.isFinite(x)||!this.canFire()||this.air[this.side]<=0||!this.commit())return false;
@@ -116,17 +145,7 @@ class BattleGame extends BC.DuelGame {
   this.emit('tracer',{x:line.mx,y:line.my,tx:line.x,ty:line.y,hit:line.kind,id:line.id});this.actionPaths.push([[line.mx,line.my],[line.x,line.y]]);
   if(--burst.left<=0)this.burst=null;
  }
- stepProjectile(p,dt){
-  if(p.delay>0){p.delay-=dt;return;}
-  p.age+=dt;p.vx+=(p.kind==='air'?0:this.wind)*dt;p.vy+=CT.gravity*dt;
-  const dx=p.vx*dt,dy=p.vy*dt,steps=Math.max(1,Math.ceil(Math.hypot(dx,dy)/(CT.cell/2)));
-  for(let i=0;i<steps&&p.alive;i++){
-   p.x+=dx/steps;p.y+=dy/steps;p.path.push([p.x,p.y]);
-   const hit=this.tanks.find(t=>t.hp>0&&Math.hypot(p.x-t.x,p.y-(t.y-CT.tankHeight/2))<CT.directHitRadius);
-   if(this.solid(p.x,p.y)||hit){this.impact(p,true,hit?.id??null);break;}
-   if(p.x<0||p.x>BT.width||p.y>CT.height||p.age>CT.projectileLife)this.impact(p,false);
-  }
- }
+ stepProjectile(p,dt){const result=this.advanceProjectile(p,dt);if(result)this.impact(p,result.hit,result.direct);}
  impact(p,hit,direct=null){
   if(!p.alive)return;p.alive=false;this.actionPaths.push(p.path.slice());this.actionLandings.push(p.x);
   if(!hit)return;
