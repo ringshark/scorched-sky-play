@@ -49,7 +49,7 @@ function drawGuide(){
  ctx.font='800 10px system-ui';ctx.textAlign='center';ctx.strokeStyle='#24322d';ctx.lineWidth=3;ctx.strokeText(label,g.x,g.y-14);ctx.fillStyle=color;ctx.fillText(label,g.x,g.y-14);ctx.restore();
 }
 function render(){
- background();if(version!==game.terrain.version||terrainRef!==game.terrain)bakeTerrain();ctx.save();ctx.translate(-camera,0);ctx.drawImage(terrainCanvas,0,0);buildings();
+ background();if(version!==game.terrain.version||terrainRef!==game.terrain)bakeTerrain();ctx.save();ctx.translate(-camera,0);ctx.drawImage(terrainCanvas,0,0);art.shadows(ctx,game);buildings();
  const active=game.active;if(active.side===0&&game.phase!=='aim')for(const path of active.ghost){if(path.length<2)continue;ctx.setLineDash([4,10]);ctx.strokeStyle='#fff5de50';ctx.lineWidth=2;ctx.beginPath();path.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.stroke();ctx.setLineDash([]);}
  art.activeId=game.turn;art.gunFacing=Math.sign((game.tanks[game.targetId]?.x??game.active.x+1)-game.active.x)||1;art.moving=game.phase==='aim'&&game.driveDirection!==0;units();drawGuide();
  if(art.moving){const t=game.active;for(let i=0;i<3;i++){const progress=(game.clock*1.6+i*.31)%1;art.puff(ctx,t.x-game.driveDirection*(15+progress*25),t.y-progress*8,12+progress*19,(1-progress)*.14);}}
@@ -111,3 +111,4 @@ function tick(dt){game.update(dt);consume();for(const f of fx){f.age+=dt;if(!f.b
 function frame(ms){if(!last)last=ms;accumulator+=Math.min((ms-last)/1000,CT.maxFrame);last=ms;while(accumulator>=CT.step){tick(CT.step);accumulator-=CT.step;}updateUI();render();requestAnimationFrame(frame);}
 window.battleDebug={game,update:dt=>{tick(dt);updateUI();},getCamera:()=>camera,getGuide:()=>currentGuide()};consume();updateUI();requestAnimationFrame(frame);
 })();
+
