@@ -2,8 +2,18 @@
 (()=>{
 const game=new TacticsGame(),canvas=document.querySelector('#board'),ctx=canvas.getContext('2d'),$=id=>document.getElementById(id),S=TT.cell;
 let mode='move',target=null,feedback='',fx=[],animations=new Map(),last=0,clock=0,uiKey='';
-const atlas=new Image(),unitArt=document.createElement('canvas');let artReady=false;atlas.onload=()=>{unitArt.width=atlas.width;unitArt.height=atlas.height;const ac=unitArt.getContext('2d');ac.filter='brightness(1.14) contrast(1.04)';ac.drawImage(atlas,0,0);artReady=true;};atlas.src='assets/tactics-units-v1.webp';
+const atlas=new Image(),unitArt=document.createElement('canvas');let artReady=false;atlas.onload=()=>{gradeMaterial(atlas,unitArt,1.3,1.1,.9);artReady=true;};atlas.src='assets/tactics-units-v1.webp';
 const crops=[[139,9,302,558],[584,9,302,558],[171,582,227,425],[615,582,229,425],[181,1027,216,447],[628,1027,217,452]];
+// Grade cached pixels rather than relying on Canvas filter support on phones.
+function gradeMaterial(image,out,brightness,contrast,saturation,soften=false){
+ const work=document.createElement('canvas');work.width=soften?324:image.width;work.height=soften?432:image.height;const c=work.getContext('2d');c.drawImage(image,0,0,work.width,work.height);
+ let pixels;try{pixels=c.getImageData(0,0,work.width,work.height);}catch{
+  // Direct file:// launches may prohibit pixel reads; keep artwork playable.
+  out.width=soften?432:image.width;out.height=soften?576:image.height;const oc=out.getContext('2d');oc.filter=`brightness(${brightness}) contrast(${contrast}) saturate(${saturation})`;oc.drawImage(work,0,0,out.width,out.height);return;
+ }const d=pixels.data;
+ for(let i=0;i<d.length;i+=4){const r=(d[i]*brightness-128)*contrast+128,g=(d[i+1]*brightness-128)*contrast+128,b=(d[i+2]*brightness-128)*contrast+128,l=.2126*r+.7152*g+.0722*b;d[i]=l+(r-l)*saturation;d[i+1]=l+(g-l)*saturation;d[i+2]=l+(b-l)*saturation;}
+ c.putImageData(pixels,0,0);out.width=soften?432:image.width;out.height=soften?576:image.height;const oc=out.getContext('2d');oc.imageSmoothingEnabled=true;oc.imageSmoothingQuality='high';oc.drawImage(work,0,0,out.width,out.height);
+}
 const noise=(a,b)=>{const n=Math.sin(a*12.9898+b*78.233)*43758.5453;return n-Math.floor(n);};
 function rect(c,x,y,w,h,r,color){c.fillStyle=color;c.beginPath();c.roundRect(x,y,w,h,r);c.fill();}
 function oval(c,x,y,rx,ry,color){c.fillStyle=color;c.beginPath();c.ellipse(x,y,rx,ry,0,0,Math.PI*2);c.fill();}
@@ -30,21 +40,22 @@ function proceduralFeature(t){const x=t.x*S,y=t.y*S,n=noise(t.x,t.y);
  if(t.hp<TT[t.kind==='sandbag'?'sandbagHP':t.kind+'HP']){rect(ctx,x+9,y+42,30,3,1,'#24362c');rect(ctx,x+9,y+42,30*t.hp/TT[t.kind==='sandbag'?'sandbagHP':t.kind+'HP'],3,1,'#d4b37d');}
 }
 // Runtime art is cosmetic: every prop is anchored to its original collision tile.
-const terrainArt=new Image(),propArt=new Image();let terrainReady=false,propsReady=false;
-terrainArt.onload=()=>terrainReady=true;terrainArt.src='assets/tactics-ground-v2.webp';
-propArt.onload=()=>propsReady=true;propArt.src='assets/tactics-cover-v2.webp';
+const terrainArt=new Image(),propArt=new Image(),quietGround=document.createElement('canvas'),coverArt=document.createElement('canvas');let terrainReady=false,propsReady=false;
+// Cache the material grading once: ground recedes, interactive silhouettes retain detail.
+terrainArt.onload=()=>{gradeMaterial(terrainArt,quietGround,.73,.92,.65,true);const c=quietGround.getContext('2d');c.fillStyle='#263b4918';c.fillRect(0,0,432,576);terrainReady=true;};terrainArt.src='assets/tactics-ground-v2.webp';
+propArt.onload=()=>{gradeMaterial(propArt,coverArt,1.18,1.12,.85);propsReady=true;};propArt.src='assets/tactics-cover-v2.webp';
 const propCrops=Array.from({length:6},(_,i)=>[i%2*256,Math.floor(i/2)*256,256,256]); // Equal atlas cells, with transparent margins.
 function feature(t){
  if(!propsReady){proceduralFeature(t);return;}
  const x=t.x*S,y=t.y*S;
- function sprite(index,size){const crop=propCrops[index];if(!crop)return;ctx.drawImage(propArt,...crop,x+24-size/2,y+24-size/2,size,size);}
+ function sprite(index,size){const crop=propCrops[index];if(!crop)return;ctx.drawImage(coverArt,...crop,x+24-size/2,y+24-size/2,size,size);}
  if(t.crater)sprite(5,46);
  if(t.kind==='rubble'){sprite(4,46);return;}
  if(t.hp<=0)return;
  const index={building:0,rock:1,tree:2,sandbag:3}[t.kind];
  if(index===undefined)return;
  // Short unified contact shadows keep the props and units seated on the ground.
- oval(ctx,x+27,y+29,t.kind==='sandbag'?19:18,t.kind==='sandbag'?6:16,'#16201a35');
+ oval(ctx,x+27,y+29,t.kind==='sandbag'?19:18,t.kind==='sandbag'?6:16,'#0b141bac');
  sprite(index,t.kind==='tree'?46:44);
  const maxHP=TT[t.kind==='sandbag'?'sandbagHP':t.kind+'HP'];
  if(t.hp<maxHP){
@@ -60,14 +71,18 @@ function drawUnit(u){let px=u.x*S+24,py=u.y*S+24,angle=u.facing;const animation=
   else {for(let i=0;i<5;i++)rect(ctx,px-12+noise(i,u.id)*22,py-9+noise(i,u.id+8)*17,5,4,1,'#4b4937');}
   return;
  }
- const color=u.side?'#f29a83':'#8de1db';ctx.strokeStyle=u.side?'#ee937d88':'#8de1db88';ctx.lineWidth=1.2;ctx.beginPath();ctx.arc(px,py,19,0,Math.PI*2);ctx.stroke();if(u.id===game.selected){ctx.strokeStyle=color;ctx.lineWidth=2;ctx.beginPath();ctx.arc(px,py,21,0,Math.PI*2);ctx.stroke();}
- oval(ctx,px+4,py+6,18,15,'#14201672');ctx.save();ctx.translate(px,py);ctx.rotate(angle);
+ const color=u.side?'#ffae91':'#9ff5ef';
+ oval(ctx,px+3,py+5,19,16,'#08121bc4');
+ // Dark under-stroke keeps team markers legible over both grass and the dirt road.
+ for(const [width,ink] of [[4,'#10202ce6'],[1.7,color]]){ctx.strokeStyle=ink;ctx.lineWidth=width;ctx.beginPath();ctx.arc(px,py,20,0,Math.PI*2);ctx.stroke();}
+ if(u.id===game.selected){ctx.strokeStyle='#fff4cc';ctx.lineWidth=2;ctx.setLineDash([7,4]);ctx.beginPath();ctx.arc(px,py,23,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);}
+ctx.save();ctx.translate(px,py);ctx.rotate(angle);
  if(artReady){const row=['tank','gunner','rocket'].indexOf(u.kind),crop=crops[row*2+u.side];if(u.kind==='tank')ctx.drawImage(unitArt,...crop,-13,-23,26,46);else for(const [dx,dy] of [[-9,6],[9,6],[0,-7]])ctx.drawImage(unitArt,...crop,dx-6.5,dy-13,13,26);}
  else if(u.kind==='tank'){rect(ctx,-15,-15,7,31,2,'#202c27');rect(ctx,8,-15,7,31,2,'#202c27');rect(ctx,-10,-16,20,32,3,u.side?'#a0805d':'#688477');rect(ctx,-7,-10,14,17,3,'#9b9d78');rect(ctx,-2,-25,4,19,1,'#c1ba93');}
  else for(const [dx,dy] of [[-9,5],[9,5],[0,-7]]){oval(ctx,dx,dy,5,8,u.side?'#a48162':'#7a9273');oval(ctx,dx,dy-3,4,4,'#aaa784');rect(ctx,dx+2,dy-13,2,12,1,'#293730');}
- ctx.restore();rect(ctx,px-10,py+19,20,3,1,'#14231d');rect(ctx,px-10,py+19,20*u.hp/TACTICS_TYPES[u.kind].hp,3,1,color);ctx.font='800 8px system-ui';ctx.textAlign='center';ctx.fillStyle='#edf2d8';ctx.strokeStyle='#1d3328';ctx.lineWidth=3;const label=(u.side?'E':'')+(u.id%3+1)+(u.used?' ✓':'');ctx.strokeText(label,px,py-22);ctx.fillText(label,px,py-22);
+ ctx.restore();rect(ctx,px-10,py+19,20,3,1,'#14231d');rect(ctx,px-10,py+19,20*u.hp/TACTICS_TYPES[u.kind].hp,3,1,color);ctx.font='800 8px system-ui';ctx.textAlign='center';ctx.fillStyle='#edf2d8';ctx.strokeStyle='#1d3328';ctx.lineWidth=3;const label=(u.side?'E':'')+(u.id%3+1)+' '+({tank:'TNK',gunner:'MG',rocket:'RKT'}[u.kind])+(u.used?' ✓':'');rect(ctx,px-22,py-31,44,11,3,'#0b1928ed');ctx.fillStyle=color;ctx.fillText(label,px,py-23);
 }
-function render(){ctx.drawImage(terrainReady?terrainArt:ground,0,0,432,576);
+function render(){ctx.drawImage(terrainReady?quietGround:ground,0,0,432,576);
  // Broad edge falloff adds depth without hiding terrain or changing tile rules.
  const shade=ctx.createRadialGradient(216,260,120,216,288,370);shade.addColorStop(0,'#18251c00');shade.addColorStop(1,'#101c2440');ctx.fillStyle=shade;ctx.fillRect(0,0,432,576);
  if(game.phase==='deploy'){ctx.fillStyle='#58afba26';ctx.fillRect(0,(TT.rows-TT.deployRows)*S,432,TT.deployRows*S);ctx.strokeStyle='#94d9dbb0';ctx.setLineDash([4,5]);ctx.strokeRect(1,(TT.rows-TT.deployRows)*S,430,TT.deployRows*S-1);ctx.setLineDash([]);}
